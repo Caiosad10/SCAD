@@ -8,8 +8,11 @@ node_modules/
 *.log
 
 .qa-data/
+.qa-*/
 .edge-qa2/
 .edge-qa3/
+.edge-v2/
+.edge-*/
 backups/
 shots/downloads/
 

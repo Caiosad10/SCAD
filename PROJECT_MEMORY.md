@@ -1,8 +1,8 @@
 # SCAD — Project Memory
 
 **Última atualização:** 2026-11-10
-**Estado:** em operação (produção local, em uso por duas pessoas)
-**Repositório/app:** `C:\Users\Citra LTDA\OneDrive\Desktop\DSH\scad`
+**Estado:** v2.0 implementada e testada em branch `fase-a` (cópia de produção); **produção ainda na v1.0** até a janela de deploy.
+**Repositório/app:** `C:\Users\Citra LTDA\OneDrive\Desktop\DSH\scad` (produção) · branch em `scad-v2` (worktree)
 
 Este documento é a fonte de verdade das decisões de produto, regras de negócio e próximos passos. Atualizar sempre que uma decisão for tomada.
 
@@ -176,16 +176,32 @@ Migração: adicionar `schemaVersion`, `profiles`, `collections`, `processes`, `
 
 ## 7. Roadmap
 
-### Fase A — Coleções, processos e situação do documento (próxima)
+### Fase A — Coleções, processos e situação do documento (implementada em branch, deploy pendente)
 
-1. Schema v2 + migração com backup.
-2. Telas de Coleções e Processos (com “Voltar”), barra flutuante oculta nessas telas.
-3. Título `${COLEÇÃO} - ${PROCESSO}`; código interno oculto.
-4. Critérios por processo + copiar critérios de outro processo.
-5. Visão da coleção (processos + consolidado ponderado) e do processo.
-6. Ativo/Inativo do documento + motivo + selo + suspensão/reativação.
-7. Perfis Sergio/Diogenes + seleção por dispositivo + autor em toda atividade.
-8. Ajustes: gestão de coleções/processos/perfis.
+Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
+
+1. Schema v2 com `collections`, `processes`, `profiles`, `processId`, `active`/`inactiveReason`, autor em `checks` e ator em `activity`.
+2. Migração automática v1 → v2 com backup em `data/backups/db-v1-*.json`; preserva ids, arquivos, checks, notas, meta e histórico; idempotente.
+3. Telas de Coleções e Processos, com “Voltar” e barra flutuante oculta nas listas; ao entrar no processo a barra surge com animação.
+4. Título `${COLEÇÃO} - ${PROCESSO}`; código aleatório fora da interface; código legível `ISO9001-DC` no JSON/CSV.
+5. Critérios por processo, criação de critério no processo, cópia selecionável de outro processo (no cadastro do processo e em Ajustes).
+6. Percentual ponderado por verificações; visão por processo e consolidado por coleção.
+7. Documento Ativo/Inativo com motivo obrigatório, selo Inativo, saída da fila, checks suspensos, reativação e métricas separadas. A aprovação formal da dispensa pelo revisor fica para a Fase B.
+8. Perfis Sergio (analista) e Diogenes (revisor) semeados; seleção/troca por dispositivo; toda atividade nova registra o autor (antigas ficam como legado).
+9. Importação, edição, busca, filtros, matriz, apontamentos, CSV e backup funcionando no escopo do processo.
+10. Cache de sessão e retomada de rota preservados.
+
+**Validação feita**
+- Cópia fresca da produção migrada: 41 documentos, 246 verificações, 6 critérios, 25 concluídas; conferência de coleção/processo e último documento.
+- Navegador real (Edge headless): troca de perfil, abertura de coleção/processo, barra oculta/animada, novo processo com 5 critérios copiados, nova coleção, onboarding de instalação vazia, importação de arquivo, critério e processo pela UI, documento inativado/reativado, matriz com célula “—” e selo Inativo, atividade com autor.
+- Reinício sobre estado já v2 não remigra (idempotente). Backup pré-migração presente.
+- Nenhuma alteração foi feita em `data/` nem no processo 4177.
+
+**Deploy (pendente de confirmação explícita)**
+1. Nova cópia de segurança de `data/db.json` + `data/files` + código v1 (tag `v1.0`).
+2. Parar o servidor 4177, fazer merge de `fase-a` em `master`, iniciar v2; a migração roda sozinha com backup em `data/backups`.
+3. Validar `/api/state` (41/246/6), abrir o app, conferir login/perfil e um check; se falhar, restaurar tag `v1.0` + backup e reiniciar.
+4. Janela estimada: menos de 1 minuto.
 
 ### Fase B — Revisão
 
@@ -249,6 +265,7 @@ Migração: adicionar `schemaVersion`, `profiles`, `collections`, `processes`, `
 | 2026-11-10 | Fluxo de verificação: nota com foco, “Próximo critério”, fim do re-render que fechava o teclado, restauração de rota após recarga. |
 | 2026-11-10 | “Não se aplica” removido; setas de critério corrigidas; decisões de coleções, revisão e dispensa registradas. |
 | 2026-11-10 | Git iniciado; v1.0 commitada e tagueada (`294b890`); bundle em `backups/`; percentual ponderado e código 1+2 confirmados. |
+| 2026-11-10 | Fase A v2 implementada em `fase-a`: schema coleções/processos, migração com backup, perfis/autoria, documento Ativo/Inativo, telas de coleções, critérios copiáveis e barra oculta/animada. Deploy pendente de confirmação. |
 
 ---
 

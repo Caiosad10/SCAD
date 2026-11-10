@@ -1,6 +1,9 @@
-# SCAD — Controle de Análise Documental
+# SCAD — Controle de Análise Documental (v2)
 
-Um caderno de trabalho local para **importar documentos, verificar critérios, registrar apontamentos e retomar de onde parou** — no notebook e no iPad, pela rede de casa/escritório.
+> **Branch `fase-a` — v2 pronta para validação; produção ainda na v1.0 até a janela de deploy.**
+> Coleções → Processos, critérios por processo, perfis Sergio/Diogenes, autoria na atividade e documento Ativo/Inativo.
+
+Um caderno de trabalho local para **organizar coleções e processos, importar documentos, verificar critérios, registrar apontamentos e retomar de onde parou** — no notebook e no iPad, pela rede de casa/escritório.
 
 > Decisões de produto, regras de revisão e plano das próximas fases: [PROJECT_MEMORY.md](PROJECT_MEMORY.md).
 

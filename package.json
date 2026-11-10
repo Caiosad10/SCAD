@@ -1,8 +1,8 @@
 {
   "name": "scad",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "SCAD — Controle de Análise Documental: app web local para importar documentos, verificar critérios e registrar apontamentos.",
+  "description": "SCAD — Controle de Análise Documental: coleções, processos, documentos, verificações e apontamentos.",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
