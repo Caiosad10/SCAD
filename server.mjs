@@ -391,6 +391,11 @@ function processStats(processId) {
     const docChecks = state.checks.filter((check) => check.docId === doc.id);
     return docChecks.length > 0 && docChecks.every((check) => check.status !== 'pending');
   }).length;
+  const pct = total
+    ? Math.round((done / total) * 100)
+    : docs.length > 0 && inactiveDocs === docs.length
+      ? 100
+      : 0;
   return {
     docs: docs.length,
     activeDocs: activeDocs.length,
@@ -402,7 +407,7 @@ function processStats(processId) {
     pending: total - done,
     nc,
     obs,
-    pct: total ? Math.round((done / total) * 100) : 0,
+    pct,
     suspendedChecks: state.checks.filter(
       (check) => activeDocIds.has(check.docId) === false && docs.some((doc) => doc.id === check.docId)
     ).length,
@@ -414,16 +419,22 @@ function collectionStats(collectionId) {
   const stats = processes.map((process) => processStats(process.id));
   const total = stats.reduce((sum, item) => sum + item.checks, 0);
   const done = stats.reduce((sum, item) => sum + item.done, 0);
+  const docs = stats.reduce((sum, item) => sum + item.docs, 0);
+  const inactiveDocs = stats.reduce((sum, item) => sum + item.inactiveDocs, 0);
   return {
     processes: processes.length,
-    docs: stats.reduce((sum, item) => sum + item.docs, 0),
-    inactiveDocs: stats.reduce((sum, item) => sum + item.inactiveDocs, 0),
+    docs,
+    inactiveDocs,
     checks: total,
     done,
     pending: stats.reduce((sum, item) => sum + item.pending, 0),
     nc: stats.reduce((sum, item) => sum + item.nc, 0),
     obs: stats.reduce((sum, item) => sum + item.obs, 0),
-    pct: total ? Math.round((done / total) * 100) : 0,
+    pct: total
+      ? Math.round((done / total) * 100)
+      : docs > 0 && inactiveDocs === docs
+        ? 100
+        : 0,
   };
 }
 
@@ -900,7 +911,7 @@ async function handleApi(req, res, pathname, url) {
           processId: doc.processId,
         });
       }
-      return { rev: state.rev, check: { ...check }, activity: scopedActivity(doc.processId, 12) };
+      return { rev: state.rev, check: { ...check }, activity: scopedActivity(doc.processId, 40) };
     });
     return sendJson(res, 200, result);
   }

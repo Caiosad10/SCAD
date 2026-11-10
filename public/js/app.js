@@ -287,6 +287,14 @@ async function handleRouteChange() {
   const before = routeKey();
   parseRoute();
   rememberRoute();
+  if (['collections', 'collection'].includes(ui.route.name) && getState()?.process) {
+    try {
+      const fresh = await api.state(getState().process.id);
+      setState(fresh);
+    } catch {
+      /* mantém os números já carregados */
+    }
+  }
   if (routeKey() === before) {
     renderAll({ preserveScroll: true });
     return;
