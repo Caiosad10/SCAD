@@ -1,5 +1,5 @@
-/** SCAD — shell, rotas, interações e importação. */
-import { api } from './api.js';
+/** SCAD v2 — shell, rotas, coleções, perfis e interações. */
+import { api, configure as configureApi } from './api.js';
 import {
   getState,
   setState,
@@ -14,6 +14,11 @@ import {
   findings,
   nextPendingDoc,
   pendingQueue,
+  setActiveProcess,
+  setProfile,
+  collectionById,
+  processById,
+  currentProfile,
 } from './store.js';
 import {
   esc,
@@ -39,6 +44,7 @@ import { renderDocuments, renderDocumentsList, renderDocument, filterDocuments }
 import { renderWorkbench, resolveWorkbenchDoc } from './views/workbench.js';
 import { renderFindings, renderFindingsResults } from './views/findings.js';
 import { renderSettings } from './views/settings.js';
+import { renderCollections, renderCollection } from './views/collections.js';
 import { renderCheckRow, docSummaryHtml, checksHeadHtml, doneBannerHtml } from './views/checks.js';
 
 const NAV = [
@@ -56,6 +62,8 @@ const SCREEN_LABEL = {
   workbench: 'Bancada',
   findings: 'Apontamentos',
   settings: 'Ajustes',
+  collections: 'Coleções',
+  collection: 'Coleção',
 };
 
 const MAX_UPLOAD = 32 * 1024 * 1024;
@@ -128,31 +136,55 @@ function restoreLastRoute() {
 async function boot() {
   bindEvents();
   restoreLastRoute();
-  let paintedFromCache = false;
 
+  let paintedFromCache = false;
   const cached = readCachedState();
   if (cached?.process) {
     setState(cached);
-    paintApp();
+    const cachedProfile = cached.profiles?.find((item) => item.id === ui.profileId) || null;
+    configureApi({ actor: cachedProfile?.id || null, process: cached.process.id });
+    parseRoute();
+    renderAll();
+    revealApp(true);
     paintedFromCache = true;
   }
 
+  let base;
   try {
-    const [state, health] = await Promise.all([api.state(), api.health().catch(() => null)]);
-    setState(state);
-    ui.health = health;
-    parseRoute();
-    rememberRoute();
-    renderAll({ preserveScroll: paintedFromCache });
-    revealApp();
+    base = await api.state(null);
   } catch (err) {
     if (paintedFromCache) {
       toast('Servidor indisponível — exibindo a última cópia local.', 'err');
-    } else {
-      showBootError(err);
+      setInterval(syncIfIdle, 12000);
+      return;
+    }
+    showBootError(err);
+    return;
+  }
+  setState(base);
+  ui.health = await api.health().catch(() => null);
+
+  let profile = base.profiles?.find((item) => item.id === ui.profileId) || null;
+  configureApi({ actor: profile?.id || null, process: null });
+
+  const wanted = (base.processes || []).find((item) => item.id === ui.activeProcessId) || base.processes?.[0] || null;
+  if (wanted) {
+    try {
+      const scoped = await api.state(wanted.id);
+      setState(scoped);
+      setActiveProcess(wanted.id);
+      configureApi({ actor: profile?.id || null, process: wanted.id });
+      profile = scoped.profiles?.find((item) => item.id === ui.profileId) || profile;
+    } catch {
+      /* mantém a lista básica */
     }
   }
 
+  parseRoute();
+  rememberRoute();
+  renderAll({ preserveScroll: paintedFromCache });
+  revealApp();
+  if (!profile) showProfilePicker(base.profiles || []);
   setInterval(syncIfIdle, 12000);
 }
 
@@ -205,7 +237,8 @@ function parseRoute() {
   }
 
   let route = { name: 'dashboard', id: null };
-  if (parts[0] === 'documentos') route = parts[1] ? { name: 'document', id: parts[1] } : { name: 'documents' };
+  if (parts[0] === 'colecoes') route = parts[1] ? { name: 'collection', id: parts[1] } : { name: 'collections' };
+  else if (parts[0] === 'documentos') route = parts[1] ? { name: 'document', id: parts[1] } : { name: 'documents' };
   else if (parts[0] === 'analisar') route = { name: 'workbench', id: parts[1] || null };
   else if (parts[0] === 'apontamentos') route = { name: 'findings' };
   else if (parts[0] === 'ajustes') route = { name: 'settings' };
@@ -218,6 +251,14 @@ function parseRoute() {
     if (doc) {
       ui.route = { ...route, id: doc.id };
       history.replaceState(null, '', `#/analisar/${doc.id}`);
+    }
+  }
+  if (state && !state.process && !['collections', 'collection'].includes(ui.route.name)) {
+    if ((state.collections || []).length) {
+      ui.route = { name: 'collections', id: null };
+      history.replaceState(null, '', '#/colecoes');
+    } else {
+      ui.route = { name: 'dashboard', id: null };
     }
   }
 }
@@ -325,7 +366,13 @@ function renderAll({ preserveScroll = false } = {}) {
 
 function renderView() {
   const state = getState();
-  if (!state || !state.process) return renderOnboarding();
+  if (!state) return '';
+  if (ui.route.name === 'collections') return renderCollections(state);
+  if (ui.route.name === 'collection') return renderCollection(state, ui.route.id);
+  if (!state.process) {
+    if ((state.collections || []).length) return renderCollections(state);
+    return renderOnboarding(state);
+  }
   switch (ui.route.name) {
     case 'documents':
       return renderDocuments(state);
@@ -340,6 +387,10 @@ function renderView() {
     default:
       return renderDashboard(state);
   }
+}
+
+function routeIsProcess() {
+  return !['collections', 'collection'].includes(ui.route.name);
 }
 
 function metaLine(state) {
@@ -386,21 +437,25 @@ function metaLine(state) {
 
 function renderMasthead() {
   const state = getState();
-  if (!state?.process) {
+  const browsing = ['collections', 'collection'].includes(ui.route.name);
+  const showProcess = Boolean(state?.process) && !browsing;
+
+  if (!showProcess) {
     if (mastheadMode !== 'bare') {
       mastheadMode = 'bare';
       mastEl.className = 'masthead masthead--bare';
       mastEl.innerHTML =
         `<div class="masthead__inner"><div class="masthead__top">` +
-        `<a class="brand" href="#/" aria-label="Ir para o início">${brandHtml()}</a>` +
-        `<span class="masthead__kicker">Configuração inicial</span>` +
+        `<a class="brand" href="${browsing ? '#/colecoes' : '#/'}" aria-label="Início">${brandHtml()}</a>` +
+        `<div class="masthead__tools">${profileChipHtml()}</div>` +
         `</div></div>`;
     }
+    syncProfileChip();
     return;
   }
 
-  if (mastheadMode !== 'full') {
-    mastheadMode = 'full';
+  if (mastheadMode !== 'process') {
+    mastheadMode = 'process';
     mastEl.className = 'masthead';
     mastEl.innerHTML =
       `<div class="masthead__inner">` +
@@ -415,9 +470,14 @@ function renderMasthead() {
         'settings',
         18
       )}</a>` +
+      profileChipHtml() +
       `</div></div>` +
       `<div class="masthead__context">` +
       `<div>` +
+      `<a class="masthead__back" href="#/colecoes/${state.collection?.id || ''}" data-mast-back>${icon(
+        'arrowLeft',
+        12
+      )} <span data-mast-back-label></span></a>` +
       `<p class="eyebrow eyebrow--onink" data-mast-eyebrow></p>` +
       `<h1 class="masthead__title" data-mast-title></h1>` +
       `<p class="masthead__meta" data-mast-meta></p>` +
@@ -431,25 +491,53 @@ function renderMasthead() {
   }
 
   const s = overall(state);
+  const collection = state.collection;
+  const process = state.process;
+  const back = mastEl.querySelector('[data-mast-back]');
+  const backLabel = mastEl.querySelector('[data-mast-back-label]');
+  if (back && collection) back.setAttribute('href', `#/colecoes/${collection.id}`);
+  if (backLabel) backLabel.textContent = collection ? collection.name : 'Processos';
   const eyebrow = mastEl.querySelector('[data-mast-eyebrow]');
+  const eyebrowText = `${collection ? collection.name : 'Coleção'} · ${screenLabel()}`;
+  if (eyebrow && eyebrow.textContent !== eyebrowText) eyebrow.textContent = eyebrowText;
   const title = mastEl.querySelector('[data-mast-title]');
+  const titleText = `${collection ? collection.name : ''} - ${process.name}`.trim();
+  if (title && title.textContent !== titleText) title.textContent = titleText;
   const meta = mastEl.querySelector('[data-mast-meta]');
+  if (meta) meta.innerHTML = metaLine(state);
   const pct = mastEl.querySelector('[data-mast-pct]');
   const fill = mastEl.querySelector('[data-mast-fill]');
   const gauge = mastEl.querySelector('[data-mast-gauge]');
-  const eyebrowText = `Processo ${state.process.code} · ${screenLabel()}`;
-
-  if (eyebrow && eyebrow.textContent !== eyebrowText) eyebrow.textContent = eyebrowText;
-  if (title && title.textContent !== state.process.name) title.textContent = state.process.name;
-  if (meta) meta.innerHTML = metaLine(state);
   if (pct) pct.textContent = String(s.pct);
   if (fill) fill.style.width = `${s.pct}%`;
   if (gauge) gauge.setAttribute('aria-label', `${s.pct}% das verificações concluídas`);
+  syncProfileChip();
+}
+
+function profileChipHtml() {
+  return (
+    `<button type="button" class="profile-chip" data-action="switch-profile" title="Trocar perfil">` +
+    `<span class="profile-chip__dot" aria-hidden="true"></span>` +
+    `<span class="profile-chip__name" data-profile-name>—</span>` +
+    `<span class="profile-chip__role" data-profile-role></span>` +
+    `</button>`
+  );
+}
+
+function syncProfileChip() {
+  const profile = currentProfile();
+  const name = mastEl.querySelector('[data-profile-name]');
+  const role = mastEl.querySelector('[data-profile-role]');
+  if (name) name.textContent = profile ? profile.name : 'Escolher perfil';
+  if (role) role.textContent = profile ? (profile.role === 'reviewer' ? 'revisor' : 'analista') : '';
+  const chip = mastEl.querySelector('[data-profile-name]')?.closest('.profile-chip');
+  if (chip) chip.title = profile ? `Usando como ${profile.name} — trocar` : 'Escolher perfil';
 }
 
 function ensureNav() {
   const state = getState();
-  if (!state?.process) {
+  const visible = Boolean(state?.process) && routeIsProcess();
+  if (!visible) {
     if (navReady) {
       navSlot.innerHTML = '';
       navReady = false;
@@ -464,7 +552,7 @@ function ensureNav() {
     navReady = true;
     navActive = null;
     navSlot.innerHTML =
-      `<div class="nav-shell"><nav class="nav" aria-label="Navegação principal">` +
+      `<div class="nav-shell nav-shell--enter"><nav class="nav" aria-label="Navegação principal">` +
       `<span class="nav__pill" aria-hidden="true"></span>` +
       NAV.map(
         (item) =>
@@ -475,6 +563,8 @@ function ensureNav() {
     navEl = navSlot.querySelector('.nav');
     pillEl = navSlot.querySelector('.nav__pill');
     updatePill();
+    const shell = navSlot.querySelector('.nav-shell');
+    setTimeout(() => shell?.classList.remove('nav-shell--enter'), 260);
   }
   return true;
 }
@@ -676,7 +766,249 @@ function moveRowFocus(rows, focusedRow, delta) {
 
 /* ------------------------------------------------------------- ações */
 
+function showProfilePicker(profiles = []) {
+  const options = profiles
+    .map(
+      (profile) =>
+        `<button type="button" class="profile-option" data-profile-id="${profile.id}">` +
+        `<span class="profile-option__name">${esc(profile.name)}</span>` +
+        `<span class="stamp stamp--quiet">${profile.role === 'reviewer' ? 'revisor' : 'analista'}</span>` +
+        `</button>`
+    )
+    .join('');
+  const dialog = openSheet({
+    title: 'Quem está usando o SCAD?',
+    eyebrow: 'Perfil',
+    body:
+      (options || `<p class="sheet-message">Nenhum perfil cadastrado.</p>`) +
+      `<p class="sheet__note">O nome identifica suas ações no histórico. Você pode trocar depois pelo cabeçalho.</p>`,
+    footer: `<button type="button" class="btn btn--ghost" data-close-profile>Só olhando</button>`,
+  });
+  dialog.querySelectorAll('[data-profile-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const profile = profiles.find((item) => item.id === button.dataset.profileId);
+      setProfile(button.dataset.profileId);
+      configureApi({ actor: button.dataset.profileId });
+      dialog.close();
+      syncProfileChip();
+      if (profile) toast(`Perfil ativo: ${profile.name}`);
+    });
+  });
+  dialog.querySelector('[data-close-profile]')?.addEventListener('click', () => dialog.close());
+}
+
+async function openProcess(processId) {
+  if (!processId) return;
+  try {
+    const next = await api.state(processId);
+    setState(next);
+    setActiveProcess(processId);
+    configureApi({ process: processId, actor: currentProfile()?.id || null });
+    ui.docFilter = 'all';
+    ui.docQuery = '';
+    if (location.hash === '#/' || location.hash === '') {
+      parseRoute();
+      renderAll();
+    } else {
+      location.hash = '#/';
+    }
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+function showNewCollection() {
+  const dialog = openSheet({
+    title: 'Nova coleção',
+    eyebrow: 'Arquivo',
+    body:
+      `<div class="field"><label for="collection-name">Nome da coleção</label>` +
+      `<input id="collection-name" type="text" maxlength="120" placeholder="Ex.: ISO 9001:2015" autocomplete="off"></div>` +
+      `<div class="field"><label for="collection-desc">Descrição <span class="field__optional">opcional</span></label>` +
+      `<textarea id="collection-desc" rows="2" maxlength="600" placeholder="Certificação, período, escopo…"></textarea></div>`,
+    footer:
+      `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
+      `<button type="button" class="btn btn--primary" data-save>${icon('plus', 15)} Criar coleção</button>`,
+  });
+  const nameInput = dialog.querySelector('#collection-name');
+  nameInput?.focus();
+  dialog.querySelector('[data-cancel]')?.addEventListener('click', () => dialog.close());
+  dialog.querySelector('[data-save]')?.addEventListener('click', async () => {
+    try {
+      const res = await api.createCollection({
+        name: nameInput.value,
+        description: dialog.querySelector('#collection-desc').value,
+      });
+      setState(res.state);
+      dialog.close();
+      if (res.createdCollection) navigate(`#/colecoes/${res.createdCollection.id}`);
+      else renderAll({ preserveScroll: true });
+      toast('Coleção criada.');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+}
+
+function showNewProcess(collectionId) {
+  const state = getState();
+  const processes = state.processes || [];
+  const sourceOptions = processes
+    .map(
+      (process) =>
+        `<option value="${process.id}">${esc(process.name)}</option>`
+    )
+    .join('');
+
+  const dialog = openSheet({
+    title: 'Novo processo',
+    eyebrow: state.collections?.find((item) => item.id === collectionId)?.name || 'Coleção',
+    body:
+      `<div class="field"><label for="proc-name">Nome do processo</label>` +
+      `<input id="proc-name" type="text" maxlength="120" placeholder="Ex.: POP, DC, Organograma" autocomplete="off"></div>` +
+      `<div class="field"><label for="proc-desc">Descrição <span class="field__optional">opcional</span></label>` +
+      `<textarea id="proc-desc" rows="2" maxlength="1000" placeholder="Objetivo ou escopo deste processo"></textarea></div>` +
+      `<div class="field"><label for="proc-source">Copiar critérios de</label>` +
+      `<select id="proc-source"><option value="">Começar sem critérios</option>${sourceOptions}</select>` +
+      `<p class="field__hint">Marque abaixo quais critérios copiar; é só uma cópia, os processos continuam independentes.</p></div>` +
+      `<div id="copy-criteria" class="copy-criteria"></div>`,
+    footer:
+      `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
+      `<button type="button" class="btn btn--primary" data-save>${icon('plus', 15)} Criar processo</button>`,
+  });
+
+  const source = dialog.querySelector('#proc-source');
+  const criteriaBox = dialog.querySelector('#copy-criteria');
+  const renderCriteria = () => {
+    const pid = source.value;
+    const list = (state.criteriaCatalog || []).filter((criterion) => criterion.processId === pid);
+    criteriaBox.innerHTML = list.length
+      ? `<p class="copy-criteria__title">Critérios disponíveis</p>` +
+        list
+          .map(
+            (criterion) =>
+              `<label class="check-option"><input type="checkbox" value="${criterion.id}" checked>${esc(
+                criterion.label
+              )}</label>`
+          )
+          .join('')
+      : '';
+  };
+  source?.addEventListener('change', renderCriteria);
+  renderCriteria();
+  dialog.querySelector('#proc-name')?.focus();
+
+  dialog.querySelector('[data-cancel]')?.addEventListener('click', () => dialog.close());
+  dialog.querySelector('[data-save]')?.addEventListener('click', async () => {
+    const name = dialog.querySelector('#proc-name').value.trim();
+    if (!name) {
+      toast('Dê um nome ao processo.', 'err');
+      dialog.querySelector('#proc-name').focus();
+      return;
+    }
+    const catalog = new Map((state.criteriaCatalog || []).map((criterion) => [criterion.id, criterion]));
+    const criteria = [...criteriaBox.querySelectorAll('input[type="checkbox"]:checked')]
+      .map((input) => catalog.get(input.value))
+      .filter(Boolean)
+      .map((criterion) => ({ label: criterion.label, hint: criterion.hint || '' }));
+    try {
+      const res = await api.createProcess({
+        collectionId,
+        name,
+        description: dialog.querySelector('#proc-desc').value,
+        criteria,
+      });
+      setState(res.state);
+      if (res.createdProcess) {
+        setActiveProcess(res.createdProcess.id);
+        configureApi({ process: res.createdProcess.id });
+      }
+      dialog.close();
+      if (location.hash === '#/') {
+        parseRoute();
+        renderAll();
+      } else {
+        location.hash = '#/';
+      }
+      toast('Processo criado.');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+}
+
+function showCopyCriteria() {
+  const state = getState();
+  const process = state.process;
+  if (!process) return;
+  const sources = (state.processes || []).filter((item) => item.id !== process.id);
+  if (!sources.length) {
+    toast('Não há outro processo para copiar critérios.', 'err');
+    return;
+  }
+  const sourceOptions = sources
+    .map((item) => `<option value="${item.id}">${esc(item.name)}</option>`)
+    .join('');
+  const dialog = openSheet({
+    title: 'Copiar critérios',
+    eyebrow: process.name,
+    body:
+      `<div class="field"><label for="copy-source">Processo de origem</label>` +
+      `<select id="copy-source">${sourceOptions}</select></div>` +
+      `<div class="copy-criteria" id="copy-list"></div>` +
+      `<p class="sheet__note">A cópia é independente: alterar um critério aqui não muda o processo de origem.</p>`,
+    footer:
+      `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
+      `<button type="button" class="btn btn--primary" data-copy>Copiar selecionados</button>`,
+  });
+  const select = dialog.querySelector('#copy-source');
+  const list = dialog.querySelector('#copy-list');
+  const renderList = () => {
+    const criteria = (state.criteriaCatalog || []).filter((item) => item.processId === select.value);
+    list.innerHTML = criteria.length
+      ? `<p class="copy-criteria__title">Critérios disponíveis</p>` +
+        criteria
+          .map(
+            (criterion) =>
+              `<label class="check-option"><input type="checkbox" value="${criterion.id}" checked>${esc(
+                criterion.label
+              )}</label>`
+          )
+          .join('')
+      : `<p class="field__hint">O processo de origem não tem critérios.</p>`;
+  };
+  select.addEventListener('change', renderList);
+  renderList();
+  dialog.querySelector('[data-cancel]')?.addEventListener('click', () => dialog.close());
+  dialog.querySelector('[data-copy]')?.addEventListener('click', async () => {
+    const ids = [...list.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
+    if (!ids.length) {
+      toast('Selecione ao menos um critério.', 'err');
+      return;
+    }
+    try {
+      const res = await api.copyCriteria({
+        targetProcessId: process.id,
+        sourceProcessId: select.value,
+        criterionIds: ids,
+      });
+      setState(res.state);
+      dialog.close();
+      renderAll({ preserveScroll: true });
+      toast(res.copied ? `Critérios copiados: ${res.copied}` : 'Nenhum critério novo.');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+}
+
 const ACTIONS = {
+  'open-collection': (el) => navigate(`#/colecoes/${el.dataset.id}`),
+  'copy-criteria': () => showCopyCriteria(),
+  'open-process': (el) => openProcess(el.dataset.id),
+  'new-collection': () => showNewCollection(),
+  'new-process': (el) => showNewProcess(el.dataset.collectionId),
+  'switch-profile': () => showProfilePicker(getState()?.profiles || []),
   'open-import': () => openImportDialog(),
   'export-csv': () => exportCsv(),
   print: () => window.print(),
@@ -732,6 +1064,7 @@ const ACTIONS = {
   'clear-note': (el) => clearNote(el.dataset.id),
   'doc-preview': (el) => openPreview(el.dataset.id),
   'doc-rename': (el) => renameDoc(el.dataset.id),
+  'doc-toggle-active': (el) => toggleDocActive(el.dataset.id),
   'doc-delete': (el) => deleteDoc(el.dataset.id),
   'finding-edit': (el) => editFinding(el.dataset.checkId),
   'criterion-up': (el) => moveCriterion(el.dataset.id, -1),
@@ -768,7 +1101,8 @@ function refreshQueueCounts() {
     const doc = docById(state, el.dataset.queueCount);
     if (!doc) return;
     const st = docStats(state, doc.id);
-    el.textContent = docFlag(state, doc.id) === 'flagged' ? '!' : `${st.done}/${st.total}`;
+    const flag = docFlag(state, doc.id);
+    el.textContent = flag === 'inactive' ? '—' : flag === 'flagged' ? '!' : `${st.done}/${st.total}`;
   });
 }
 
@@ -791,12 +1125,14 @@ function updateCheckRow(check, { focus = false, focusNote = false, status = null
   const state = getState();
   const row = document.querySelector(`[data-check-row="${check.id}"]`);
   if (!row) return;
+  const doc = docById(state, check.docId);
   const criterion = state.criteria.find((c) => c.id === check.criterionId);
   const crit = criteriaSorted(state);
   const index = crit.findIndex((c) => c.id === check.criterionId);
   const holder = document.createElement('div');
   holder.innerHTML = renderCheckRow(state, check, criterion, index, {
     isLast: index === crit.length - 1,
+    disabled: doc?.active === false,
   });
   const next = holder.firstElementChild;
   if (!next) return;
@@ -815,6 +1151,10 @@ async function setCheckStatus(checkId, status, { focusNote = false } = {}) {
   const state = getState();
   const check = state.checks.find((c) => c.id === checkId);
   if (!check) return;
+  if (docById(state, check.docId)?.active === false) {
+    toast('Documento inativo: reative para editar verificações.', 'err');
+    return;
+  }
 
   if (check.status === status) {
     if (status === 'pending') return;
@@ -840,6 +1180,7 @@ async function setCheckStatus(checkId, status, { focusNote = false } = {}) {
   try {
     const res = await api.updateCheck(checkId, { status, note: noteNow });
     mergeCheck(res.rev, res.check);
+    if (Array.isArray(res.activity)) getState().activity = res.activity;
     rememberRoute();
     const live = document.querySelector(`[data-note-id="${checkId}"]`);
     if (live && live.value !== res.check.note) {
@@ -983,7 +1324,7 @@ function renameDoc(docId) {
       return;
     }
     try {
-      const res = await api.renameDocument(doc.id, value);
+      const res = await api.updateDocument(doc.id, { name: value });
       setState(res.state);
       dialog.close();
       renderAll({ preserveScroll: true });
@@ -996,6 +1337,63 @@ function renameDoc(docId) {
     if (event.key === 'Enter') dialog.querySelector('[data-save]')?.click();
   });
 }
+
+async function toggleDocActive(docId) {
+  const doc = docById(getState(), docId);
+  if (!doc) return;
+  if (doc.active === false) {
+    const ok = await confirmSheet({
+      title: 'Reativar documento?',
+      message:
+        'As verificações voltam ao estado anterior e o documento retorna à fila de análise. A dispensa fica registrada no histórico.',
+      confirmLabel: 'Reativar documento',
+    });
+    if (!ok) return;
+    try {
+      const res = await api.updateDocument(doc.id, { active: true });
+      setState(res.state);
+      renderAll({ preserveScroll: true });
+      toast('Documento reativado.');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+    return;
+  }
+
+  const dialog = openSheet({
+    title: 'Inativar documento',
+    eyebrow: doc.name,
+    body:
+      `<div class="field"><label for="inactive-reason">Motivo</label>` +
+      `<textarea id="inactive-reason" rows="3" maxlength="500" ` +
+      `placeholder="Ex.: cargo inexistente, documento descontinuado, não se aplica…"></textarea></div>` +
+      `<p class="sheet__note">O documento sai da fila e conta como verificado; as verificações ficam suspensas e podem ser retomadas ao reativar. A dispensa entra na revisão do Diogenes.</p>`,
+    footer:
+      `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
+      `<button type="button" class="btn btn--primary" data-inactivate>Inativar documento</button>`,
+  });
+  const reason = dialog.querySelector('#inactive-reason');
+  reason?.focus();
+  dialog.querySelector('[data-cancel]')?.addEventListener('click', () => dialog.close());
+  dialog.querySelector('[data-inactivate]')?.addEventListener('click', async () => {
+    const value = reason.value.trim();
+    if (!value) {
+      toast('Informe o motivo da inativação.', 'err');
+      reason.focus();
+      return;
+    }
+    try {
+      const res = await api.updateDocument(doc.id, { active: false, inactiveReason: value });
+      setState(res.state);
+      dialog.close();
+      renderAll({ preserveScroll: true });
+      toast('Documento inativado.');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+}
+
 
 async function deleteDoc(docId) {
   const doc = docById(getState(), docId);
@@ -1126,7 +1524,12 @@ async function handleFiles(files, dialog) {
     try {
       if (file.size > MAX_UPLOAD) throw new Error('acima de 32 MB');
       const data = await readBase64(file);
-      const res = await api.addDocument({ name: file.name, mime: file.type || '', size: file.size, data });
+      const res = await api.addDocument(getState().process.id, {
+        name: file.name,
+        mime: file.type || '',
+        size: file.size,
+        data,
+      });
       setState(res.state);
       ok += 1;
       row.classList.add('import-item--done');
@@ -1191,7 +1594,9 @@ function addChip() {
 async function createProcess(form) {
   const nameInput = form.querySelector('#process-name');
   const descInput = form.querySelector('#process-desc');
+  const collectionInput = form.querySelector('#collection-name');
   const name = nameInput?.value.trim() || '';
+  const collectionName = collectionInput?.value.trim() || 'Coleção principal';
   if (!name) {
     toast('Dê um nome ao processo.', 'err');
     nameInput?.focus();
@@ -1207,21 +1612,26 @@ async function createProcess(form) {
   const button = form.querySelector('#onboard-submit');
   if (button) {
     button.disabled = true;
-    button.textContent = 'Criando processo…';
+    button.textContent = 'Criando…';
   }
 
   try {
+    const collectionRes = await api.createCollection({ name: collectionName, description: '' });
+    const collectionId = collectionRes.createdCollection.id;
     const res = await api.createProcess({
+      collectionId,
       name,
       description: descInput?.value.trim() || '',
       criteria: criteria.map((label) => ({ label })),
     });
     setState(res.state);
-    if (location.hash !== '#/') {
-      history.replaceState(null, '', '#/');
+    if (res.createdProcess) {
+      setActiveProcess(res.createdProcess.id);
+      configureApi({ process: res.createdProcess.id });
     }
+    if (location.hash !== '#/') history.replaceState(null, '', '#/');
     parseRoute();
-    renderAll({ entering: true });
+    renderAll();
     toast('Processo criado. Agora importe os documentos.');
   } catch (err) {
     toast(err.message, 'err');
@@ -1242,7 +1652,7 @@ async function saveProcess(form) {
     return;
   }
   try {
-    const res = await api.updateProcess({ name, description });
+    const res = await api.updateProcess(getState().process.id, { name, description });
     setState(res.state);
     renderAll({ preserveScroll: true });
     toast('Processo atualizado.');
@@ -1259,7 +1669,7 @@ async function addCriterion(form) {
     return;
   }
   try {
-    const res = await api.addCriterion({ label });
+    const res = await api.addCriterion(getState().process.id, { label });
     setState(res.state);
     renderAll({ preserveScroll: true });
     toast('Critério adicionado aos documentos.');
@@ -1345,13 +1755,15 @@ async function resetAll() {
   try {
     const res = await api.reset();
     setState(res.state);
+    setActiveProcess(null);
+    configureApi({ process: null });
     ui.docFilter = 'all';
     ui.docQuery = '';
     ui.findFilter = 'all';
     ui.findQuery = '';
     ui.queueAll = false;
     navigate('#/', { force: true });
-    toast('Dados apagados. Um novo processo pode ser criado.');
+    toast('Dados apagados. Uma nova coleção pode ser criada.');
   } catch (err) {
     toast(err.message, 'err');
   }
@@ -1365,16 +1777,22 @@ async function restoreBackup(file) {
     toast('O arquivo não é um JSON válido.', 'err');
     return;
   }
-  const incoming = parsed?.state ?? parsed;
-  if (!incoming || typeof incoming !== 'object' || !Array.isArray(incoming.documents)) {
+  const incoming = parsed?.state?.state ?? parsed?.state ?? parsed;
+  if (
+    !incoming ||
+    typeof incoming !== 'object' ||
+    (!Array.isArray(incoming.documents) && !Array.isArray(incoming.collections))
+  ) {
     toast('Backup não reconhecido.', 'err');
     return;
   }
   const ok = await confirmSheet({
     title: 'Restaurar backup?',
     message:
-      `O estado atual será substituído por <b>${esc(incoming.process?.name || 'processo sem nome')}</b> ` +
-      `(${plural(incoming.documents.length, 'documento', 'documentos')}). ` +
+      `O estado atual será substituído por <b>${
+        esc(incoming.collections?.[0]?.name || incoming.process?.name || 'arquivo de backup')
+      }</b> ` +
+      `(${plural(incoming.documents?.length || 0, 'documento', 'documentos')}). ` +
       `Os arquivos referenciados precisam existir nesta máquina.`,
     confirmLabel: 'Restaurar backup',
     danger: true,
@@ -1383,7 +1801,18 @@ async function restoreBackup(file) {
   try {
     const res = await api.importState(incoming);
     setState(res.state);
-    navigate('#/', { force: true });
+    const first = res.state?.processes?.[0] || null;
+    if (first) {
+      const scoped = await api.state(first.id);
+      setState(scoped);
+      setActiveProcess(first.id);
+      configureApi({ process: first.id });
+      navigate('#/', { force: true });
+    } else {
+      setActiveProcess(null);
+      configureApi({ process: null });
+      navigate('#/colecoes', { force: true });
+    }
     toast('Backup restaurado.');
   } catch (err) {
     toast(err.message, 'err');
@@ -1458,15 +1887,34 @@ function exportCsv() {
     return;
   }
   const crit = criteriaSorted(state);
-  const rows = [['Documento', 'Critério', 'Resultado', 'Nota', 'Atualizado em']];
+  const collectionName = state.collection?.name || '';
+  const processName = state.process?.name || '';
+  const processCode = state.process?.code || '';
+  const rows = [
+    [
+      'Coleção',
+      'Processo',
+      'Código',
+      'Documento',
+      'Situação do documento',
+      'Critério',
+      'Resultado',
+      'Nota',
+      'Atualizado em',
+    ],
+  ];
   for (const doc of state.documents) {
     for (const criterion of crit) {
       const check = state.checks.find((c) => c.docId === doc.id && c.criterionId === criterion.id);
       if (!check) continue;
       rows.push([
+        collectionName,
+        processName,
+        processCode,
         doc.name,
+        doc.active === false ? `Inativo — ${doc.inactiveReason || 'sem motivo'}` : 'Ativo',
         criterion.label,
-        STATUS_LABEL[check.status] || check.status,
+        doc.active === false ? 'Suspenso' : STATUS_LABEL[check.status] || check.status,
         check.note || '',
         check.updatedAt ? new Date(check.updatedAt).toLocaleString('pt-BR') : '',
       ]);
@@ -1474,7 +1922,7 @@ function exportCsv() {
   }
   const csv = rows.map((row) => row.map(csvCell).join(';')).join('\r\n');
   const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8' });
-  downloadBlob(blob, `scad-verificacoes-${dateStamp()}.csv`);
+  downloadBlob(blob, `scad-${processCode || 'verificacoes'}-${dateStamp()}.csv`);
   toast('CSV exportado com as verificações.');
 }
 
@@ -1488,7 +1936,7 @@ async function syncIfIdle() {
   if (!navigator.onLine) return;
   syncing = true;
   try {
-    const next = await api.state();
+    const next = await api.state(getState().process?.id);
     if (next.rev !== getState().rev) {
       setState(next);
       renderAll({ preserveScroll: true });

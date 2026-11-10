@@ -20,9 +20,11 @@ const FILTERS = [
   { id: 'pending', label: 'Pendentes' },
   { id: 'done', label: 'Concluídos' },
   { id: 'flagged', label: 'Com apontamento' },
+  { id: 'inactive', label: 'Inativos' },
 ];
 
 function docStamp(state, doc) {
+  if (doc.active === false) return stamp('na', { label: 'Inativo' });
   const st = docStats(state, doc.id);
   if (st.nc) return stamp('nc', { label: 'Apontamento' });
   if (st.obs) return stamp('obs', { label: 'Apontamento' });
@@ -37,16 +39,21 @@ export function filterDocuments(state) {
     .filter(({ doc }) => {
       if (query && !doc.name.toLowerCase().includes(query)) return false;
       const flag = docFlag(state, doc.id);
-      if (ui.docFilter === 'pending') return docStats(state, doc.id).pending > 0;
-      if (ui.docFilter === 'done') return docStats(state, doc.id).pending === 0;
+      if (ui.docFilter === 'inactive') return flag === 'inactive';
+      if (ui.docFilter === 'pending') return flag !== 'inactive' && docStats(state, doc.id).pending > 0;
+      if (ui.docFilter === 'done') return flag !== 'inactive' && docStats(state, doc.id).pending === 0;
       if (ui.docFilter === 'flagged') return flag === 'flagged';
       return true;
     });
 }
 
 function filterCounts(state) {
-  const counts = { all: state.documents.length, pending: 0, done: 0, flagged: 0 };
+  const counts = { all: state.documents.length, pending: 0, done: 0, flagged: 0, inactive: 0 };
   for (const doc of state.documents) {
+    if (doc.active === false) {
+      counts.inactive += 1;
+      continue;
+    }
     const st = docStats(state, doc.id);
     if (st.pending) counts.pending += 1;
     else counts.done += 1;
@@ -81,29 +88,41 @@ export function renderDocumentsList(state) {
     .map(({ doc, index }) => {
       const st = docStats(state, doc.id);
       const kind = fileKind(doc.name, doc.mime);
-      const dots = criteriaSorted(state)
-        .map((criterion) => {
-          const check = state.checks.find((c) => c.docId === doc.id && c.criterionId === criterion.id);
-          const status = check?.status || 'pending';
-          return (
-            `<span class="docrow__dot" title="${esc(criterion.label)}: ${esc(status)}">` +
-            `${statusMark(status, 13)}</span>`
-          );
-        })
-        .join('');
+      const inactive = doc.active === false;
+      const dots = inactive
+        ? criteriaSorted(state)
+            .map(() => `<span class="docrow__dot docrow__dot--off" title="Verificação suspensa">—</span>`)
+            .join('')
+        : criteriaSorted(state)
+            .map((criterion) => {
+              const check = state.checks.find((c) => c.docId === doc.id && c.criterionId === criterion.id);
+              const status = check?.status || 'pending';
+              return (
+                `<span class="docrow__dot" title="${esc(criterion.label)}: ${esc(status)}">` +
+                `${statusMark(status, 13)}</span>`
+              );
+            })
+            .join('');
 
       return (
-        `<a class="docrow" href="#/documentos/${doc.id}" data-doc-id="${doc.id}">` +
+        `<a class="docrow${inactive ? ' is-inactive' : ''}" href="#/documentos/${doc.id}" data-doc-id="${doc.id}">` +
         `<span class="docrow__index">${String(index + 1).padStart(2, '0')}</span>` +
         `<span class="docrow__icon docrow__icon--${kind}">${fileGlyph(kind, 15)}` +
         `<span class="docrow__ext">${esc(fileExt(doc.name))}</span></span>` +
         `<span class="docrow__main">` +
         `<span class="docrow__name">${esc(doc.name)}</span>` +
-        `<span class="docrow__meta">${esc(fileKindLabel(kind))} <i>·</i> ${fmtBytes(doc.size)} ` +
-        `<i>·</i> ${st.done}/${st.total} verificações <i>·</i> ${esc(fmtDate(doc.addedAt))}</span>` +
+        `<span class="docrow__meta">${
+          inactive
+            ? `<b>Inativo</b> <i>·</i> ${esc(doc.inactiveReason || 'sem motivo registrado')}`
+            : `${esc(fileKindLabel(kind))} <i>·</i> ${fmtBytes(doc.size)} <i>·</i> ${st.done}/${st.total} verificações <i>·</i> ${esc(fmtDate(doc.addedAt))}`
+        }</span>` +
         `</span>` +
         `<span class="docrow__dots" aria-hidden="true">${dots}</span>` +
-        `<span class="docrow__progress"><span>${st.pct}%</span>${bar(st.done, st.total, { thin: true, label: 'Progresso' })}</span>` +
+        `<span class="docrow__progress"><span>${inactive ? '—' : `${st.pct}%`}</span>${bar(
+          inactive ? 0 : st.done,
+          inactive ? 0 : st.total,
+          { thin: true, label: 'Progresso' }
+        )}</span>` +
         `<span class="docrow__stamp">${docStamp(state, doc)}</span>` +
         `<span class="docrow__go" aria-hidden="true">${icon('chevronRight', 15)}</span>` +
         `</a>`
@@ -180,7 +199,9 @@ export function renderDocument(state, docId) {
     `<h2 class="doc-head__title">${esc(doc.name)}</h2>` +
     `<p class="page__sub">${fmtBytes(doc.size)} <span aria-hidden="true">·</span> importado em ${esc(
       fmtDate(doc.addedAt)
-    )} <span aria-hidden="true">·</span> <span data-doc-summary>${st.done}/${st.total} verificações</span></p>` +
+    )} <span aria-hidden="true">·</span> <span data-doc-summary>${
+      doc.active === false ? 'Inativo' : `${st.done}/${st.total} verificações`
+    }</span></p>` +
     `</div>` +
     `<div class="page__actions">` +
     `<a class="btn btn--primary" href="#/analisar/${doc.id}">${icon('analyze', 16)} Ir para a bancada</a>` +
@@ -188,6 +209,10 @@ export function renderDocument(state, docId) {
       'external',
       15
     )} Ver arquivo</button>` +
+    `<button type="button" class="btn ${doc.active === false ? 'btn--secondary' : 'btn--ghost'}" ` +
+    `data-action="doc-toggle-active" data-id="${doc.id}">${icon('power', 15)} ${
+      doc.active === false ? 'Reativar' : 'Inativar'
+    }</button>` +
     `<button type="button" class="iconbtn" data-action="doc-rename" data-id="${doc.id}" aria-label="Renomear documento" title="Renomear">${icon(
       'pen',
       17
@@ -197,6 +222,10 @@ export function renderDocument(state, docId) {
       17
     )}</button>` +
     `</div></div>` +
+    (doc.active === false
+      ? `<div class="doc-inactive-banner">${icon('pause', 16)}<div><strong>Documento inativo — verificação suspensa</strong>` +
+        `<span>${esc(doc.inactiveReason || 'Sem motivo registrado')}</span></div></div>`
+      : '') +
     `<section class="card checks" aria-label="Verificações do documento">` +
     renderChecks(state, doc) +
     `</section>` +

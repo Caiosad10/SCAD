@@ -12,3 +12,6 @@ node_modules/
 .edge-qa3/
 backups/
 shots/downloads/
+
+.edge-v2/
+.edge-*/

@@ -54,9 +54,9 @@ export function renderOnboarding() {
     `<section class="view view--onboard">` +
     `<div class="onboard">` +
     `<div class="onboard__intro">` +
-    `<p class="eyebrow">Primeiro processo</p>` +
+    `<p class="eyebrow">Primeira coleção</p>` +
     `<h1 class="onboard__title">Antes de analisar, defina o que será verificado.</h1>` +
-    `<p class="onboard__lead">O SCAD organiza a análise como um arquivo de trabalho: cada documento recebe as mesmas verificações, e cada verificação guarda o resultado e a observação. Você retoma exatamente de onde parou.</p>` +
+    `<p class="onboard__lead">O SCAD organiza a análise como um arquivo: coleções agrupam processos; cada processo tem seus critérios, documentos e verificações. Você retoma exatamente de onde parou.</p>` +
     `<ol class="steps">` +
     `<li><span>01</span><div><b>Importe os arquivos.</b> PDFs, imagens, planilhas ou documentos do Word — quantos precisar.</div></li>` +
     `<li><span>02</span><div><b>Verifique cada critério.</b> Conforme, não conforme ou observação.</div></li>` +
@@ -64,14 +64,17 @@ export function renderOnboarding() {
     `</ol>` +
     `</div>` +
     `<form class="card onboard__form" id="onboard-form" novalidate>` +
-    `<h2 class="onboard__form-title">Abrir um processo</h2>` +
-    `<p class="onboard__form-sub">Dá para ajustar nome, critérios e documentos depois, em Ajustes.</p>` +
-    `<div class="field"><label for="process-name">Nome do processo</label>` +
-    `<input id="process-name" name="name" type="text" maxlength="180" autocomplete="off" ` +
-    `placeholder="Ex.: Análise de contratos 2026" required></div>` +
+    `<h2 class="onboard__form-title">Abrir coleção e processo</h2>` +
+    `<p class="onboard__form-sub">Dá para ajustar nomes, critérios e documentos depois, em Ajustes.</p>` +
+    `<div class="field"><label for="collection-name">Coleção</label>` +
+    `<input id="collection-name" name="collection" type="text" maxlength="120" autocomplete="off" ` +
+    `placeholder="Ex.: ISO 9001:2015" value="ISO 9001:2015" required></div>` +
+    `<div class="field"><label for="process-name">Processo</label>` +
+    `<input id="process-name" name="name" type="text" maxlength="120" autocomplete="off" ` +
+    `placeholder="Ex.: DC, POP, Organograma" required></div>` +
     `<div class="field"><label for="process-desc">Descrição <span class="field__optional">opcional</span></label>` +
-    `<textarea id="process-desc" name="description" rows="2" maxlength="2000" ` +
-    `placeholder="Origem dos documentos, período, responsável…"></textarea></div>` +
+    `<textarea id="process-desc" name="description" rows="2" maxlength="1000" ` +
+    `placeholder="Escopo, período, responsável…"></textarea></div>` +
     `<div class="field"><span class="field-label">Modelo de critérios</span>` +
     `<div class="presets">${presets}</div></div>` +
     `<div class="field"><span class="field-label">Critérios do processo <span id="criteria-count" class="field__optional">4 critérios</span></span>` +
@@ -80,7 +83,7 @@ export function renderOnboarding() {
     `<input id="criteria-input" type="text" maxlength="160" autocomplete="off" placeholder="Adicionar critério…" aria-label="Novo critério">` +
     `<button class="btn btn--secondary btn--sm" type="button" data-action="preset-add">${icon('plus', 15)} Adicionar</button>` +
     `</div></div>` +
-    `<button class="btn btn--primary btn--block" type="submit" id="onboard-submit">${icon('analyze', 17)} Criar processo</button>` +
+    `<button class="btn btn--primary btn--block" type="submit" id="onboard-submit">${icon('analyze', 17)} Criar coleção e processo</button>` +
     `<p class="onboard__hint">${icon('info', 13)} Tudo fica neste computador. O iPad acessa pelo endereço da rede local.</p>` +
     `</form>` +
     `</div>` +

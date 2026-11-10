@@ -95,6 +95,9 @@ export function renderDashboard(state) {
     counts.push(stamp('ok', { quiet: true, label: countLabel(s.ok, 'conforme', 'conformes') }));
     counts.push(stamp('nc', { quiet: true, label: countLabel(s.nc, 'não conforme', 'não conformes') }));
     counts.push(stamp('obs', { quiet: true, label: countLabel(s.obs, 'observação', 'observações') }));
+    if (s.inactiveDocs) {
+      counts.push(stamp('na', { quiet: true, label: countLabel(s.inactiveDocs, 'inativo', 'inativos') }));
+    }
     counts.push(stamp('pending', { quiet: true, label: countLabel(s.pending, 'pendente', 'pendentes') }));
   }
 
@@ -123,9 +126,12 @@ export function renderDashboard(state) {
       label: 'Documentos',
       value: fmtInt(s.docs),
       sub: s.docs
-        ? s.pendingDocs
-          ? `${countLabel(s.pendingDocs, 'com pendência', 'com pendências')}`
-          : 'todos verificados'
+        ? [
+            s.pendingDocs ? `${countLabel(s.pendingDocs, 'com pendência', 'com pendências')}` : 'todos verificados',
+            s.inactiveDocs ? `${countLabel(s.inactiveDocs, 'inativo', 'inativos')}` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')
         : 'nenhum importado',
       mark: icon('docs', 26),
       tone: 'docs',
@@ -135,7 +141,7 @@ export function renderDashboard(state) {
       label: 'Verificações',
       value: fmtInt(s.total),
       unit: 'no total',
-      sub: `${fmtInt(s.done)} concluídas`,
+      sub: `${fmtInt(s.done)} concluídas${s.suspended ? ` · ${fmtInt(s.suspended)} suspensas` : ''}`,
       mark: icon('analyze', 26),
       tone: 'docs',
     }) +
@@ -189,27 +195,37 @@ export function renderDashboard(state) {
     const rows = docs
       .map((doc, index) => {
         const st = docStats(state, doc.id);
-        const cells = crit
-          .map((criterion) => {
-            const check = state.checks.find((c) => c.docId === doc.id && c.criterionId === criterion.id);
-            const status = check?.status || 'pending';
-            const label = `${doc.name}, ${criterion.label}: ${STATUS_LABEL[status]}`;
-            return (
-              `<td><div class="matrix__cellwrap">` +
-              `<a class="matrix__cell matrix__cell--${status}" href="#/analisar/${doc.id}" ` +
-              `title="${esc(criterion.label)} — ${esc(STATUS_LABEL[status])}" aria-label="${esc(label)}">` +
-              `${statusMark(status, 22)}</a>` +
-              `</div></td>`
-            );
-          })
-          .join('');
+        const inactive = doc.active === false;
+        const cells = inactive
+          ? crit
+              .map(
+                (criterion) =>
+                  `<td><div class="matrix__cellwrap"><span class="matrix__dash" title="${esc(
+                    criterion.label
+                  )}: verificação suspensa">—</span></div></td>`
+              )
+              .join('')
+          : crit
+              .map((criterion) => {
+                const check = state.checks.find((c) => c.docId === doc.id && c.criterionId === criterion.id);
+                const status = check?.status || 'pending';
+                const label = `${doc.name}, ${criterion.label}: ${STATUS_LABEL[status]}`;
+                return (
+                  `<td><div class="matrix__cellwrap">` +
+                  `<a class="matrix__cell matrix__cell--${status}" href="#/analisar/${doc.id}" ` +
+                  `title="${esc(criterion.label)} — ${esc(STATUS_LABEL[status])}" aria-label="${esc(label)}">` +
+                  `${statusMark(status, 22)}</a>` +
+                  `</div></td>`
+                );
+              })
+              .join('');
         return (
-          `<tr>` +
+          `<tr class="${inactive ? 'matrix__row--inactive' : ''}">` +
           `<td><a class="matrix__doc" href="#/analisar/${doc.id}">` +
           `<span class="matrix__num">${String(index + 1).padStart(2, '0')}</span>` +
           `<span class="matrix__name">${esc(doc.name)}</span></a></td>` +
           cells +
-          `<td class="matrix__status"><span>${st.done}/${st.total}</span></td>` +
+          `<td class="matrix__status"><span>${inactive ? 'Inativo' : `${st.done}/${st.total}`}</span></td>` +
           `</tr>`
         );
       })
@@ -223,6 +239,7 @@ export function renderDashboard(state) {
       `<span>${statusMark('ok', 15)} conforme</span>` +
       `<span>${statusMark('nc', 15)} não conforme</span>` +
       `<span>${statusMark('obs', 15)} observação</span>` +
+      `<span class="matrix__legend-inactive">— inativo</span>` +
       `</div>`;
   }
 
@@ -266,7 +283,9 @@ export function renderDashboard(state) {
         .map(
           (item) =>
             `<div class="act"><span class="act__dot" aria-hidden="true"></span>` +
-            `<span>${esc(item.text)}</span>` +
+            `<span>${item.actorName ? `<b class="act__actor">${esc(item.actorName)}</b> ` : ''}${esc(
+              item.text
+            )}</span>` +
             `<span class="act__time">${esc(relTime(item.at))}</span></div>`
         )
         .join('')

@@ -32,7 +32,9 @@ function queueItem(state, doc, currentId, index) {
     `data-queue-item="${doc.id}"${doc.id === currentId ? ' aria-current="page"' : ''}>` +
     `<span class="queue__num">${String(index + 1).padStart(2, '0')}</span>` +
     `<span class="queue__name">${esc(doc.name)}</span>` +
-    `<span class="queue__count" data-queue-count="${doc.id}">${flag === 'flagged' ? '!' : `${st.done}/${st.total}`}</span>` +
+    `<span class="queue__count" data-queue-count="${doc.id}">${
+      flag === 'inactive' ? '—' : flag === 'flagged' ? '!' : `${st.done}/${st.total}`
+    }</span>` +
     `</a>`
   );
 }
@@ -132,6 +134,10 @@ export function renderWorkbench(state) {
       'external',
       15
     )} Ver arquivo</button>` +
+    `<button type="button" class="btn ${doc.active === false ? 'btn--secondary' : 'btn--ghost'}" ` +
+    `data-action="doc-toggle-active" data-id="${doc.id}">${icon('power', 15)} ${
+      doc.active === false ? 'Reativar' : 'Inativar'
+    }</button>` +
     `<button type="button" class="iconbtn" data-action="doc-rename" data-id="${doc.id}" aria-label="Renomear documento" title="Renomear">${icon(
       'pen',
       17
@@ -141,6 +147,10 @@ export function renderWorkbench(state) {
       17
     )}</button>` +
     `</div></div>` +
+    (doc.active === false
+      ? `<div class="doc-inactive-banner">${icon('pause', 16)}<div><strong>Documento inativo — verificação suspensa</strong>` +
+        `<span>${esc(doc.inactiveReason || 'Sem motivo registrado')}</span></div></div>`
+      : '') +
     completeCard +
     `<div class="workspace">` +
     `<aside class="queue" aria-label="Fila de documentos">` +

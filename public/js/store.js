@@ -1,31 +1,13 @@
-/** Estado em memória + seletores do SCAD. */
+/** Estado em memória (escopo do processo ativo) + seletores do SCAD v2. */
 
 let state = null;
 
-const CACHE_KEY = 'scad:state:v1';
+const CACHE_PREFIX = 'scad:state:v2';
 let cacheTimer = null;
 
-function scheduleCache() {
-  if (typeof sessionStorage === 'undefined') return;
-  clearTimeout(cacheTimer);
-  cacheTimer = setTimeout(() => {
-    try {
-      if (state?.process) sessionStorage.setItem(CACHE_KEY, JSON.stringify(state));
-      else sessionStorage.removeItem(CACHE_KEY);
-    } catch {
-      /* armazenamento cheio ou bloqueado */
-    }
-  }, 250);
-}
-
-export function readCachedState() {
-  if (typeof sessionStorage === 'undefined') return null;
+function readStored(key) {
   try {
-    const raw = sessionStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const cached = JSON.parse(raw);
-    if (!cached || typeof cached !== 'object' || !Array.isArray(cached.checks)) return null;
-    return cached;
+    return typeof localStorage === 'undefined' ? null : localStorage.getItem(key);
   } catch {
     return null;
   }
@@ -39,16 +21,68 @@ export const ui = {
   findQuery: '',
   notesOpen: new Set(),
   queueAll: false,
-  lastRouteKey: '',
   health: null,
+  activeProcessId: readStored('scad:activeProcess'),
+  profileId: readStored('scad:profile'),
+  pendingCollectionId: null,
 };
+
+export function setActiveProcess(id) {
+  ui.activeProcessId = id || null;
+  try {
+    if (id) localStorage.setItem('scad:activeProcess', id);
+    else localStorage.removeItem('scad:activeProcess');
+  } catch {
+    /* storage */
+  }
+}
+
+export function setProfile(id) {
+  ui.profileId = id || null;
+  try {
+    if (id) localStorage.setItem('scad:profile', id);
+    else localStorage.removeItem('scad:profile');
+  } catch {
+    /* storage */
+  }
+}
 
 export function getState() {
   return state;
 }
 
+function scheduleCache() {
+  if (typeof sessionStorage === 'undefined') return;
+  clearTimeout(cacheTimer);
+  cacheTimer = setTimeout(() => {
+    try {
+      if (state?.process?.id) {
+        sessionStorage.setItem(`${CACHE_PREFIX}:${state.process.id}`, JSON.stringify(state));
+      }
+    } catch {
+      /* cheio/bloqueado */
+    }
+  }, 250);
+}
+
+export function readCachedState() {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const pid = ui.activeProcessId;
+    if (!pid) return null;
+    const raw = sessionStorage.getItem(`${CACHE_PREFIX}:${pid}`);
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    if (!cached || cached.process?.id !== pid || !Array.isArray(cached.checks)) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
 export function setState(next) {
   state = next;
+  if (next?.process?.id) ui.activeProcessId = next.process.id;
   scheduleCache();
 }
 
@@ -76,23 +110,29 @@ export function criterionById(id, s = state) {
 }
 
 export function docIndex(s, docId) {
-  return s.documents.findIndex((d) => d.id === docId);
+  return (s?.documents || []).findIndex((d) => d.id === docId);
 }
 
 export function checksOfDoc(s, docId) {
-  return s.checks.filter((c) => c.docId === docId);
+  return (s?.checks || []).filter((c) => c.docId === docId);
 }
 
 export function docStats(s, docId) {
+  const doc = docById(s, docId);
   const checks = checksOfDoc(s, docId);
+  if (doc?.active === false) {
+    return { inactive: true, total: checks.length, done: 0, pending: 0, nc: 0, obs: 0, pct: 0 };
+  }
   const total = checks.length;
   const done = checks.filter((c) => c.status !== 'pending').length;
   const nc = checks.filter((c) => c.status === 'nc').length;
   const obs = checks.filter((c) => c.status === 'obs').length;
-  return { total, done, pending: total - done, nc, obs, pct: total ? Math.round((done / total) * 100) : 0 };
+  return { inactive: false, total, done, pending: total - done, nc, obs, pct: total ? Math.round((done / total) * 100) : 0 };
 }
 
 export function docFlag(s, docId) {
+  const doc = docById(s, docId);
+  if (doc?.active === false) return 'inactive';
   const st = docStats(s, docId);
   if (st.nc || st.obs) return 'flagged';
   if (st.pending) return 'pending';
@@ -100,39 +140,42 @@ export function docFlag(s, docId) {
 }
 
 export function overall(s = state) {
-  const checks = s?.checks || [];
-  const total = checks.length;
-  const done = checks.filter((c) => c.status !== 'pending').length;
-  const nc = checks.filter((c) => c.status === 'nc').length;
-  const obs = checks.filter((c) => c.status === 'obs').length;
-  const na = checks.filter((c) => c.status === 'na').length;
-  const ok = checks.filter((c) => c.status === 'ok').length;
-  const docs = s?.documents?.length || 0;
-  const pendingDocs = (s?.documents || []).filter((d) => docStats(s, d.id).pending > 0).length;
+  const docs = s?.documents || [];
+  const activeDocs = docs.filter((d) => d.active !== false);
+  const inactiveDocs = docs.length - activeDocs.length;
+  const activeIds = new Set(activeDocs.map((d) => d.id));
+  const activeChecks = (s?.checks || []).filter((c) => activeIds.has(c.docId));
+  const suspended = (s?.checks || []).filter((c) => !activeIds.has(c.docId));
+  const total = activeChecks.length;
+  const done = activeChecks.filter((c) => c.status !== 'pending').length;
+  const nc = activeChecks.filter((c) => c.status === 'nc').length;
+  const obs = activeChecks.filter((c) => c.status === 'obs').length;
+  const ok = activeChecks.filter((c) => c.status === 'ok').length;
+  const pendingDocs = activeDocs.filter((d) => docStats(s, d.id).pending > 0).length;
   return {
-    docs,
+    docs: docs.length,
+    activeDocs: activeDocs.length,
+    inactiveDocs,
     total,
     done,
     pending: total - done,
     pendingDocs,
     nc,
     obs,
-    na,
     ok,
+    na: 0,
+    suspended: suspended.length,
     pct: total ? Math.round((done / total) * 100) : 0,
   };
 }
 
 export function findings(s = state) {
   const docs = new Map((s?.documents || []).map((d) => [d.id, d]));
+  const criteria = new Map((s?.criteria || []).map((c) => [c.id, c]));
   return (s?.checks || [])
     .filter((c) => c.status === 'nc' || c.status === 'obs')
-    .map((c) => ({
-      check: c,
-      doc: docs.get(c.docId) || null,
-      criterion: (s.criteria || []).find((cr) => cr.id === c.criterionId) || null,
-    }))
-    .filter((f) => f.doc)
+    .map((c) => ({ check: c, doc: docs.get(c.docId) || null, criterion: criteria.get(c.criterionId) || null }))
+    .filter((item) => item.doc && item.doc.active !== false)
     .sort((a, b) => {
       const ai = s.documents.indexOf(a.doc);
       const bi = s.documents.indexOf(b.doc);
@@ -142,20 +185,44 @@ export function findings(s = state) {
 }
 
 export function nextPendingDoc(s, fromDocId = null) {
-  const docs = s?.documents || [];
+  const docs = (s?.documents || []).filter((doc) => doc.active !== false);
   if (!docs.length) return null;
   const start = fromDocId ? docs.findIndex((d) => d.id === fromDocId) + 1 : 0;
   const ordered = [...docs.slice(start), ...docs.slice(0, start)];
-  const pending = ordered.find((d) => docStats(s, d.id).pending > 0);
-  return pending || null;
+  return ordered.find((d) => docStats(s, d.id).pending > 0) || null;
 }
 
 export function pendingQueue(s) {
-  return (s?.documents || []).filter((d) => docStats(s, d.id).pending > 0);
+  return (s?.documents || []).filter((d) => d.active !== false && docStats(s, d.id).pending > 0);
+}
+
+export function activeProcess(s = state) {
+  return s?.process || null;
+}
+
+export function activeCollection(s = state) {
+  return s?.collection || null;
+}
+
+export function processesOfCollection(s, collectionId) {
+  return (s?.processes || []).filter((process) => process.collectionId === collectionId);
+}
+
+export function collectionById(s, id) {
+  return (s?.collections || []).find((collection) => collection.id === id) || null;
+}
+
+export function processById(s, id) {
+  return (s?.processes || []).find((process) => process.id === id) || null;
+}
+
+export function currentProfile(s = state) {
+  return (s?.profiles || []).find((profile) => profile.id === ui.profileId) || null;
 }
 
 export function docStatusLabel(s, docId) {
   const flag = docFlag(s, docId);
+  if (flag === 'inactive') return 'Inativo';
   if (flag === 'flagged') return 'Com apontamento';
   if (flag === 'pending') return 'Em análise';
   if (flag === 'done') return 'Verificado';

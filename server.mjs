@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * SCAD — Controle de Análise Documental
- * Servidor local sem dependências: serve a SPA, guarda o estado em JSON
- * e os arquivos importados em data/files.
+ * SCAD v2 — Coleções → Processos, perfis, autoria e situação do documento.
+ * Servidor local sem dependências; dados em data/db.json e data/files.
+ * A produção só deve receber este arquivo após migração testada e backup.
  */
 import http from 'node:http';
 import path from 'node:path';
@@ -12,17 +12,19 @@ import { exec } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = process.env.SCAD_DATA ? path.resolve(process.env.SCAD_DATA) : path.join(ROOT, 'data');
 const FILES_DIR = path.join(DATA_DIR, 'files');
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const PORT = Number(process.env.PORT || process.argv[2] || 4177);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '0.1.0';
-const MAX_BODY = 48 * 1024 * 1024; // ~34 MB de arquivo em base64
-const STATUSES = new Set(['pending', 'ok', 'nc', 'obs', 'na']);
+const VERSION = '2.0.0';
+const MAX_BODY = 48 * 1024 * 1024;
+const CHECK_STATUSES = new Set(['pending', 'ok', 'nc', 'obs']);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -59,6 +61,8 @@ const FILE_MIME = {
   csv: 'text/csv; charset=utf-8',
 };
 
+const requestContext = new AsyncLocalStorage();
+
 class HttpError extends Error {
   constructor(status, message) {
     super(message);
@@ -71,35 +75,156 @@ class HttpError extends Error {
 const now = () => new Date().toISOString();
 const uid = (prefix) => `${prefix}_${crypto.randomBytes(5).toString('hex')}`;
 
+const SERGIO_ID = 'usr_sergio';
+const DIOGENES_ID = 'usr_diogenes';
+
+function defaultProfiles() {
+  return [
+    { id: SERGIO_ID, name: 'Sergio', role: 'analyst', createdAt: now() },
+    { id: DIOGENES_ID, name: 'Diogenes', role: 'reviewer', createdAt: now() },
+  ];
+}
+
 function emptyState() {
   return {
+    schemaVersion: 2,
     rev: 1,
     createdAt: now(),
     updatedAt: now(),
-    process: null,
+    profiles: defaultProfiles(),
+    collections: [],
+    processes: [],
     criteria: [],
     documents: [],
     checks: [],
-    meta: { lastDocId: null, lastCheckId: null },
+    meta: { lastDocByProcess: {}, lastCheckId: null },
     activity: [],
   };
 }
 
-let state = emptyState();
+function array(value) {
+  return Array.isArray(value) ? value : [];
+}
 
 function normalizeState(input) {
   const base = emptyState();
   const s = input && typeof input === 'object' ? input : {};
+  const profiles = array(s.profiles).length ? s.profiles : base.profiles;
+  const documents = array(s.documents).map((doc) => ({
+    ...doc,
+    active: doc.active !== false,
+    inactiveReason: typeof doc.inactiveReason === 'string' ? doc.inactiveReason : '',
+  }));
+  const meta = s.meta && typeof s.meta === 'object' ? s.meta : {};
   return {
     ...base,
     ...s,
-    meta: { ...base.meta, ...(s.meta || {}) },
-    criteria: Array.isArray(s.criteria) ? s.criteria : [],
-    documents: Array.isArray(s.documents) ? s.documents : [],
-    checks: Array.isArray(s.checks) ? s.checks : [],
-    activity: Array.isArray(s.activity) ? s.activity.slice(0, 200) : [],
+    schemaVersion: 2,
+    profiles,
+    collections: array(s.collections),
+    processes: array(s.processes),
+    criteria: array(s.criteria),
+    documents,
+    checks: array(s.checks),
+    meta: {
+      lastDocByProcess: meta.lastDocByProcess && typeof meta.lastDocByProcess === 'object' ? meta.lastDocByProcess : {},
+      lastCheckId: meta.lastCheckId || null,
+    },
+    activity: array(s.activity).slice(0, 300),
   };
 }
+
+function slug(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '')
+    .toUpperCase();
+}
+
+function makeProcessCode(collectionName, processName, processes) {
+  const collectionPart = slug(String(collectionName || '').split(':')[0]) || 'COL';
+  const processPart = slug(processName) || 'PROC';
+  const base = `${collectionPart}-${processPart}`.slice(0, 28);
+  let code = base;
+  let index = 2;
+  while (processes.some((process) => process.code === code)) {
+    code = `${base}-${index}`;
+    index += 1;
+  }
+  return code;
+}
+
+/** Converte o estado v1 (processo único) para v2 preservando ids, checks e notas. */
+function migrateV1(raw) {
+  const state = emptyState();
+  state.rev = Number(raw.rev) || 1;
+  state.createdAt = raw.createdAt || now();
+  state.updatedAt = raw.updatedAt || now();
+  state.activity = array(raw.activity).map((item) => ({ ...item, processId: item.processId || null }));
+  state.profiles = defaultProfiles();
+
+  const oldProcess = raw.process;
+  if (!oldProcess) return state;
+
+  const nameParts = String(oldProcess.name || '').split(' - ');
+  const collectionName = nameParts.length > 1 ? nameParts.slice(0, -1).join(' - ').trim() : 'Coleção principal';
+  const processName = nameParts.length > 1 ? nameParts[nameParts.length - 1].trim() : String(oldProcess.name || 'Processo');
+
+  const collection = {
+    id: uid('col'),
+    name: collectionName,
+    description: '',
+    createdAt: oldProcess.createdAt || state.createdAt,
+    updatedAt: oldProcess.updatedAt || state.updatedAt,
+  };
+  const process = {
+    id: oldProcess.id || uid('prc'),
+    collectionId: collection.id,
+    name: processName,
+    code: makeProcessCode(collectionName, processName, []),
+    legacyCode: oldProcess.code || null,
+    description: oldProcess.description || '',
+    createdAt: oldProcess.createdAt || state.createdAt,
+    updatedAt: oldProcess.updatedAt || state.updatedAt,
+  };
+
+  state.collections = [collection];
+  state.processes = [process];
+  state.criteria = array(raw.criteria).map((criterion) => ({ ...criterion, processId: process.id }));
+  state.documents = array(raw.documents).map((doc) => ({
+    ...doc,
+    processId: process.id,
+    active: true,
+    inactiveReason: '',
+  }));
+  state.checks = array(raw.checks).map((check) => ({ ...check, authorId: SERGIO_ID }));
+  state.meta = {
+    lastDocByProcess: raw.meta?.lastDocId ? { [process.id]: raw.meta.lastDocId } : {},
+    lastCheckId: raw.meta?.lastCheckId || null,
+  };
+  state.activity = state.activity.map((item) => ({
+    ...item,
+    processId: process.id,
+    collectionId: collection.id,
+    actorId: item.actorId || null,
+    actorName: item.actorName || null,
+  }));
+  state.activity.unshift({
+    id: uid('act'),
+    at: now(),
+    text: 'Migração para schema v2: coleções, processos, perfis e situação do documento',
+    actorId: null,
+    actorName: null,
+    processId: process.id,
+    collectionId: collection.id,
+  });
+  state.rev += 1;
+  state.updatedAt = now();
+  return state;
+}
+
+let state = emptyState();
 
 let saveChain = Promise.resolve();
 function persist() {
@@ -116,7 +241,6 @@ function persist() {
 }
 
 let mutex = Promise.resolve();
-/** Serializa mutações para que duas requisições não se atropelem. */
 function mutate(fn) {
   const run = mutex.catch(() => {}).then(async () => {
     const result = fn();
@@ -128,11 +252,6 @@ function mutate(fn) {
   });
   mutex = run;
   return run;
-}
-
-function log(text) {
-  state.activity.unshift({ id: uid('act'), at: now(), text });
-  state.activity = state.activity.slice(0, 200);
 }
 
 /* --------------------------------------------------------------- helpers */
@@ -156,10 +275,10 @@ function readBody(req) {
 }
 
 async function readJson(req) {
-  const buf = await readBody(req);
-  if (!buf.length) return {};
+  const buffer = await readBody(req);
+  if (!buffer.length) return {};
   try {
-    return JSON.parse(buf.toString('utf8'));
+    return JSON.parse(buffer.toString('utf8'));
   } catch {
     throw new HttpError(400, 'JSON inválido no corpo da requisição.');
   }
@@ -191,19 +310,27 @@ function optionalText(value, max, field) {
   return v;
 }
 
-function requireProcess() {
-  if (!state.process) throw new HttpError(409, 'Nenhum processo criado ainda.');
-  return state.process;
+function findProcess(id) {
+  return state.processes.find((process) => process.id === id) || null;
+}
+
+function findCollection(id) {
+  return state.collections.find((collection) => collection.id === id) || null;
+}
+
+function requireProcess(id, field = 'processo') {
+  const process = findProcess(id);
+  if (!process) throw new HttpError(404, `Processo não encontrado (${field}).`);
+  return process;
 }
 
 function findDoc(id) {
-  return state.documents.find((d) => d.id === id) || null;
+  return state.documents.find((doc) => doc.id === id) || null;
 }
 
 function lanUrls() {
   const urls = [];
-  const nets = os.networkInterfaces();
-  for (const entries of Object.values(nets)) {
+  for (const entries of Object.values(os.networkInterfaces())) {
     for (const net of entries || []) {
       if (net.family === 'IPv4' && !net.internal) {
         urls.push({ label: net.address, url: `http://${net.address}:${PORT}` });
@@ -213,9 +340,173 @@ function lanUrls() {
   return urls;
 }
 
+function actorFrom(req) {
+  const id = req.headers['x-scad-actor'];
+  if (!id) return null;
+  return state.profiles.find((profile) => profile.id === id) || null;
+}
+
+function processFromRequest(req) {
+  const id = req.headers['x-scad-process'];
+  return id && findProcess(id) ? id : null;
+}
+
+function log(text, extra = {}) {
+  const context = requestContext.getStore() || {};
+  const actor = extra.actor || context.actor || null;
+  const processId = extra.processId !== undefined ? extra.processId : context.processId || null;
+  const process = processId ? findProcess(processId) : null;
+  const collectionId = extra.collectionId || process?.collectionId || null;
+  state.activity.unshift({
+    id: uid('act'),
+    at: now(),
+    text,
+    actorId: actor?.id || null,
+    actorName: actor?.name || null,
+    actorRole: actor?.role || null,
+    processId,
+    collectionId,
+  });
+  state.activity = state.activity.slice(0, 300);
+}
+
+/* ---------------------------------------------------------- estatísticas */
+
+function processStats(processId) {
+  const docs = state.documents.filter((doc) => doc.processId === processId);
+  const inactiveDocs = docs.filter((doc) => doc.active === false).length;
+  const activeDocs = docs.filter((doc) => doc.active !== false);
+  const activeDocIds = new Set(activeDocs.map((doc) => doc.id));
+  const checks = state.checks.filter((check) => activeDocIds.has(check.docId));
+  const total = checks.length;
+  const done = checks.filter((check) => check.status !== 'pending').length;
+  const nc = checks.filter((check) => check.status === 'nc').length;
+  const obs = checks.filter((check) => check.status === 'obs').length;
+  const pendingDocs = activeDocs.filter((doc) => {
+    const docChecks = checks.filter((check) => check.docId === doc.id);
+    return docChecks.some((check) => check.status === 'pending');
+  }).length;
+  const verifiedDocs = docs.filter((doc) => {
+    if (doc.active === false) return true;
+    const docChecks = state.checks.filter((check) => check.docId === doc.id);
+    return docChecks.length > 0 && docChecks.every((check) => check.status !== 'pending');
+  }).length;
+  return {
+    docs: docs.length,
+    activeDocs: activeDocs.length,
+    inactiveDocs,
+    verifiedDocs,
+    pendingDocs,
+    checks: total,
+    done,
+    pending: total - done,
+    nc,
+    obs,
+    pct: total ? Math.round((done / total) * 100) : 0,
+    suspendedChecks: state.checks.filter(
+      (check) => activeDocIds.has(check.docId) === false && docs.some((doc) => doc.id === check.docId)
+    ).length,
+  };
+}
+
+function collectionStats(collectionId) {
+  const processes = state.processes.filter((process) => process.collectionId === collectionId);
+  const stats = processes.map((process) => processStats(process.id));
+  const total = stats.reduce((sum, item) => sum + item.checks, 0);
+  const done = stats.reduce((sum, item) => sum + item.done, 0);
+  return {
+    processes: processes.length,
+    docs: stats.reduce((sum, item) => sum + item.docs, 0),
+    inactiveDocs: stats.reduce((sum, item) => sum + item.inactiveDocs, 0),
+    checks: total,
+    done,
+    pending: stats.reduce((sum, item) => sum + item.pending, 0),
+    nc: stats.reduce((sum, item) => sum + item.nc, 0),
+    obs: stats.reduce((sum, item) => sum + item.obs, 0),
+    pct: total ? Math.round((done / total) * 100) : 0,
+  };
+}
+
+function scopedActivity(processId, limit = 40) {
+  return state.activity
+    .filter((item) => (processId ? item.processId === processId : false))
+    .slice(0, limit);
+}
+
+function scopedState(processId) {
+  const collections = state.collections.map((collection) => ({
+    ...collection,
+    stats: collectionStats(collection.id),
+  }));
+  const processes = state.processes.map((process) => ({
+    ...process,
+    stats: processStats(process.id),
+  }));
+  const base = {
+    schemaVersion: 2,
+    rev: state.rev,
+    updatedAt: state.updatedAt,
+    profiles: state.profiles,
+    collections,
+    processes,
+    criteriaCatalog: state.criteria.map(({ id, processId: pid, label, hint }) => ({
+      id,
+      processId: pid,
+      label,
+      hint,
+    })),
+    process: null,
+    collection: null,
+    criteria: [],
+    documents: [],
+    checks: [],
+    meta: { lastDocId: null, lastCheckId: null },
+    activity: [],
+    counts: {
+      docs: 0,
+      inactiveDocs: 0,
+      checks: 0,
+      done: 0,
+      pending: 0,
+      nc: 0,
+      obs: 0,
+      pct: 0,
+      suspendedChecks: 0,
+    },
+  };
+
+  if (!processId) return base;
+  const process = findProcess(processId);
+  if (!process) return base;
+  const collection = findCollection(process.collectionId);
+  const docs = state.documents.filter((doc) => doc.processId === processId);
+  const docIds = new Set(docs.map((doc) => doc.id));
+  const checks = state.checks.filter((check) => docIds.has(check.docId));
+  return {
+    ...base,
+    process,
+    collection,
+    criteria: state.criteria
+      .filter((criterion) => criterion.processId === processId)
+      .sort((a, b) => a.order - b.order),
+    documents: docs,
+    checks,
+    meta: {
+      lastDocId: state.meta.lastDocByProcess[processId] || null,
+      lastCheckId: state.meta.lastCheckId || null,
+    },
+    activity: scopedActivity(processId),
+    counts: processStats(processId),
+  };
+}
+
+function sendState(res, processId, extra = {}) {
+  return sendJson(res, 200, { rev: state.rev, state: scopedState(processId), ...extra });
+}
+
 /* ------------------------------------------------------------------ API */
 
-async function handleApi(req, res, pathname) {
+async function handleApi(req, res, pathname, url) {
   const method = req.method;
 
   if (pathname === '/api/health' && method === 'GET') {
@@ -223,6 +514,7 @@ async function handleApi(req, res, pathname) {
       ok: true,
       app: 'scad',
       version: VERSION,
+      schemaVersion: 2,
       port: PORT,
       lan: lanUrls(),
       uptime: Math.round(process.uptime()),
@@ -230,63 +522,138 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === '/api/state' && method === 'GET') {
-    return sendJson(res, 200, state);
+    const processId = url.searchParams.get('processId') || processFromRequest(req);
+    return sendJson(res, 200, scopedState(processId));
   }
 
-  if (pathname === '/api/process' && method === 'POST') {
+  if (pathname === '/api/collections' && method === 'POST') {
     const body = await readJson(req);
-    const name = text(body.name, 180, 'nome do processo');
-    const description = optionalText(body.description, 2000, 'descrição');
-    const criteria = Array.isArray(body.criteria) ? body.criteria : [];
-    if (!criteria.length) throw new HttpError(400, 'Defina pelo menos um critério de verificação.');
+    const name = text(body.name, 120, 'nome da coleção');
+    const description = optionalText(body.description, 600, 'descrição');
+    const result = await mutate(() => {
+      if (state.collections.some((collection) => collection.name.toLowerCase() === name.toLowerCase())) {
+        throw new HttpError(409, 'Já existe uma coleção com esse nome.');
+      }
+      const collection = { id: uid('col'), name, description, createdAt: now(), updatedAt: now() };
+      state.collections.push(collection);
+      log(`Coleção criada: ${name}`, { collectionId: collection.id, processId: null });
+      return { rev: state.rev, state: scopedState(null), createdCollection: collection };
+    });
+    return sendJson(res, 201, result);
+  }
 
-    const created = await mutate(() => {
-      if (state.process) throw new HttpError(409, 'Já existe um processo. Redefina os dados para iniciar outro.');
-      state.criteria = criteria.map((c, i) => ({
-        id: uid('crit'),
-        label: text(c?.label ?? 'Critério', 160, 'critério'),
-        hint: optionalText(c?.hint, 400, 'orientação'),
-        order: i,
-      }));
-      state.documents = [];
-      state.checks = [];
-      state.meta = { lastDocId: null, lastCheckId: null };
-      state.process = {
+  const collectionIdMatch = pathname.match(/^\/api\/collections\/([^/]+)$/);
+  if (collectionIdMatch) {
+    const id = decodeURIComponent(collectionIdMatch[1]);
+    if (method === 'PATCH') {
+      const body = await readJson(req);
+      const result = await mutate(() => {
+        const collection = findCollection(id);
+        if (!collection) throw new HttpError(404, 'Coleção não encontrada.');
+        if (body.name != null) collection.name = text(body.name, 120, 'nome da coleção');
+        if (body.description != null) collection.description = optionalText(body.description, 600, 'descrição');
+        collection.updatedAt = now();
+        log(`Coleção atualizada: ${collection.name}`, { collectionId: id, processId: null });
+        return { rev: state.rev, state: scopedState(processFromRequest(req)) };
+      });
+      return sendJson(res, 200, result);
+    }
+    if (method === 'DELETE') {
+      const result = await mutate(() => {
+        const collection = findCollection(id);
+        if (!collection) throw new HttpError(404, 'Coleção não encontrada.');
+        if (state.processes.some((process) => process.collectionId === id)) {
+          throw new HttpError(409, 'Exclua ou mova os processos antes de excluir a coleção.');
+        }
+        state.collections = state.collections.filter((item) => item.id !== id);
+        log(`Coleção removida: ${collection.name}`, { collectionId: null, processId: null });
+        return { rev: state.rev, state: scopedState(null) };
+      });
+      return sendJson(res, 200, result);
+    }
+  }
+
+  if (pathname === '/api/processes' && method === 'POST') {
+    const body = await readJson(req);
+    const collection = findCollection(body.collectionId);
+    if (!collection) throw new HttpError(404, 'Coleção não encontrada.');
+    const name = text(body.name, 120, 'nome do processo');
+    const description = optionalText(body.description, 1000, 'descrição');
+    const result = await mutate(() => {
+      if (state.processes.some((p) => p.collectionId === collection.id && p.name.toLowerCase() === name.toLowerCase())) {
+        throw new HttpError(409, 'Já existe um processo com esse nome nesta coleção.');
+      }
+      const process = {
         id: uid('prc'),
-        code: `PRT-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
+        collectionId: collection.id,
         name,
+        code: makeProcessCode(collection.name, name, state.processes),
         description,
         createdAt: now(),
         updatedAt: now(),
       };
-      log(`Processo criado: ${name}`);
-      return { rev: state.rev, state };
+      state.processes.push(process);
+      const criteria = array(body.criteria);
+      criteria.forEach((item, index) => {
+        const label = text(item?.label, 160, 'critério');
+        state.criteria.push({
+          id: uid('crit'),
+          processId: process.id,
+          label,
+          hint: optionalText(item?.hint, 400, 'orientação'),
+          order: index,
+        });
+      });
+      log(`Processo criado: ${collection.name} - ${name}`, {
+        processId: process.id,
+        collectionId: collection.id,
+      });
+      return { rev: state.rev, state: scopedState(process.id), createdProcess: process };
     });
-    return sendJson(res, 201, created);
+    return sendJson(res, 201, result);
   }
 
-  if (pathname === '/api/process' && method === 'PATCH') {
-    const body = await readJson(req);
-    const result = await mutate(() => {
-      const proc = requireProcess();
-      if (body.name != null) proc.name = text(body.name, 180, 'nome do processo');
-      if (body.description != null) proc.description = optionalText(body.description, 2000, 'descrição');
-      proc.updatedAt = now();
-      log(`Processo atualizado: ${proc.name}`);
-      return { rev: state.rev, state };
-    });
-    return sendJson(res, 200, result);
+  const processIdMatch = pathname.match(/^\/api\/processes\/([^/]+)$/);
+  if (processIdMatch) {
+    const id = decodeURIComponent(processIdMatch[1]);
+    if (method === 'PATCH') {
+      const body = await readJson(req);
+      const result = await mutate(() => {
+        const process = requireProcess(id);
+        if (body.name != null) process.name = text(body.name, 120, 'nome do processo');
+        if (body.description != null) process.description = optionalText(body.description, 1000, 'descrição');
+        process.updatedAt = now();
+        log(`Processo atualizado: ${process.name}`, { processId: id });
+        return { rev: state.rev, state: scopedState(id) };
+      });
+      return sendJson(res, 200, result);
+    }
+    if (method === 'DELETE') {
+      const result = await mutate(() => {
+        const process = requireProcess(id);
+        if (state.documents.some((doc) => doc.processId === id)) {
+          throw new HttpError(409, 'Exclua ou mova os documentos antes de excluir o processo.');
+        }
+        const docs = new Set(state.documents.filter((doc) => doc.processId === id).map((doc) => doc.id));
+        state.processes = state.processes.filter((item) => item.id !== id);
+        state.criteria = state.criteria.filter((criterion) => criterion.processId !== id);
+        state.checks = state.checks.filter((check) => !docs.has(check.docId));
+        log(`Processo removido: ${process.name}`, { processId: null });
+        return { rev: state.rev, state: scopedState(processFromRequest(req)) };
+      });
+      return sendJson(res, 200, result);
+    }
   }
 
   if (pathname === '/api/criteria' && method === 'POST') {
     const body = await readJson(req);
+    const process = requireProcess(body.processId);
     const label = text(body.label, 160, 'critério');
     const hint = optionalText(body.hint, 400, 'orientação');
     const result = await mutate(() => {
-      requireProcess();
-      const criterion = { id: uid('crit'), label, hint, order: state.criteria.length };
+      const criterion = { id: uid('crit'), processId: process.id, label, hint, order: state.criteria.filter((c) => c.processId === process.id).length };
       state.criteria.push(criterion);
-      for (const doc of state.documents) {
+      for (const doc of state.documents.filter((item) => item.processId === process.id)) {
         state.checks.push({
           id: uid('chk'),
           docId: doc.id,
@@ -294,12 +661,62 @@ async function handleApi(req, res, pathname) {
           status: 'pending',
           note: '',
           updatedAt: now(),
+          authorId: null,
         });
       }
-      log(`Critério adicionado: ${label}`);
-      return { rev: state.rev, state };
+      log(`Critério adicionado: ${label}`, { processId: process.id });
+      return { rev: state.rev, state: scopedState(process.id) };
     });
     return sendJson(res, 201, result);
+  }
+
+  if (pathname === '/api/criteria/copy' && method === 'POST') {
+    const body = await readJson(req);
+    const target = requireProcess(body.targetProcessId, 'processo de destino');
+    const source = requireProcess(body.sourceProcessId, 'processo de origem');
+    if (target.id === source.id) throw new HttpError(400, 'Escolha um processo de origem diferente.');
+    const ids = Array.isArray(body.criterionIds) ? body.criterionIds.map(String) : null;
+    const result = await mutate(() => {
+      const sourceCriteria = state.criteria
+        .filter((criterion) => criterion.processId === source.id)
+        .filter((criterion) => !ids || ids.includes(criterion.id));
+      if (!sourceCriteria.length) throw new HttpError(400, 'Nenhum critério selecionado.');
+      const existing = new Set(
+        state.criteria.filter((criterion) => criterion.processId === target.id).map((criterion) => criterion.label.toLowerCase())
+      );
+      let order = state.criteria.filter((criterion) => criterion.processId === target.id).length;
+      const created = [];
+      for (const criterion of sourceCriteria) {
+        if (existing.has(criterion.label.toLowerCase())) continue;
+        const copy = {
+          id: uid('crit'),
+          processId: target.id,
+          label: criterion.label,
+          hint: criterion.hint || '',
+          order: order++,
+        };
+        state.criteria.push(copy);
+        existing.add(copy.label.toLowerCase());
+        created.push(copy);
+        for (const doc of state.documents.filter((item) => item.processId === target.id)) {
+          state.checks.push({
+            id: uid('chk'),
+            docId: doc.id,
+            criterionId: copy.id,
+            status: 'pending',
+            note: '',
+            updatedAt: now(),
+            authorId: null,
+          });
+        }
+      }
+      log(
+        `Critérios copiados de ${source.name} para ${target.name}: ${created.length}`,
+        { processId: target.id }
+      );
+      return { rev: state.rev, state: scopedState(target.id), copied: created.length };
+    });
+    return sendJson(res, 200, result);
   }
 
   const criteriaReorder = pathname.match(/^\/api\/criteria\/reorder$/);
@@ -308,43 +725,44 @@ async function handleApi(req, res, pathname) {
     const ids = Array.isArray(body.ids) ? body.ids.map(String) : null;
     if (!ids) throw new HttpError(400, 'Lista de critérios inválida.');
     const result = await mutate(() => {
-      requireProcess();
-      const byId = new Map(state.criteria.map((c) => [c.id, c]));
+      const processId = processFromRequest(req);
+      if (!processId) throw new HttpError(400, 'Processo não informado.');
+      const byId = new Map(state.criteria.filter((criterion) => criterion.processId === processId).map((criterion) => [criterion.id, criterion]));
       const ordered = ids.map((id) => byId.get(id)).filter(Boolean);
-      if (ordered.length !== state.criteria.length) {
-        throw new HttpError(400, 'A nova ordem precisa conter todos os critérios.');
+      if (ordered.length !== state.criteria.filter((criterion) => criterion.processId === processId).length) {
+        throw new HttpError(400, 'A nova ordem precisa conter todos os critérios do processo.');
       }
-      state.criteria = ordered.map((c, i) => ({ ...c, order: i }));
-      return { rev: state.rev, state };
+      state.criteria = state.criteria.map((criterion) => {
+        const index = ordered.findIndex((item) => item.id === criterion.id);
+        return index >= 0 ? { ...criterion, order: index } : criterion;
+      });
+      return { rev: state.rev, state: scopedState(processId) };
     });
     return sendJson(res, 200, result);
   }
 
-  const criteriaId = pathname.match(/^\/api\/criteria\/([^/]+)$/);
-  if (criteriaId) {
-    const id = decodeURIComponent(criteriaId[1]);
+  const criterionIdMatch = pathname.match(/^\/api\/criteria\/([^/]+)$/);
+  if (criterionIdMatch) {
+    const id = decodeURIComponent(criterionIdMatch[1]);
+    const criterion = state.criteria.find((item) => item.id === id);
+    if (!criterion) throw new HttpError(404, 'Critério não encontrado.');
     if (method === 'PATCH') {
       const body = await readJson(req);
       const result = await mutate(() => {
-        requireProcess();
-        const criterion = state.criteria.find((c) => c.id === id);
-        if (!criterion) throw new HttpError(404, 'Critério não encontrado.');
         if (body.label != null) criterion.label = text(body.label, 160, 'critério');
         if (body.hint != null) criterion.hint = optionalText(body.hint, 400, 'orientação');
-        log(`Critério atualizado: ${criterion.label}`);
-        return { rev: state.rev, state };
+        log(`Critério atualizado: ${criterion.label}`, { processId: criterion.processId });
+        return { rev: state.rev, state: scopedState(criterion.processId) };
       });
       return sendJson(res, 200, result);
     }
     if (method === 'DELETE') {
       const result = await mutate(() => {
-        requireProcess();
-        const criterion = state.criteria.find((c) => c.id === id);
-        if (!criterion) throw new HttpError(404, 'Critério não encontrado.');
-        state.criteria = state.criteria.filter((c) => c.id !== id).map((c, i) => ({ ...c, order: i }));
-        state.checks = state.checks.filter((c) => c.criterionId !== id);
-        log(`Critério removido: ${criterion.label}`);
-        return { rev: state.rev, state };
+        const processId = criterion.processId;
+        state.criteria = state.criteria.filter((item) => item.id !== id);
+        state.checks = state.checks.filter((check) => check.criterionId !== id);
+        log(`Critério removido: ${criterion.label}`, { processId });
+        return { rev: state.rev, state: scopedState(processId) };
       });
       return sendJson(res, 200, result);
     }
@@ -352,8 +770,8 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === '/api/documents' && method === 'POST') {
     const body = await readJson(req);
+    const process = requireProcess(body.processId);
     const name = text(body.name, 220, 'nome do arquivo');
-    const mime = optionalText(body.mime, 160, 'tipo do arquivo');
     if (typeof body.data !== 'string' || !body.data) throw new HttpError(400, 'Conteúdo do arquivo ausente.');
     let buffer;
     try {
@@ -362,33 +780,28 @@ async function handleApi(req, res, pathname) {
       throw new HttpError(400, 'Não foi possível ler o arquivo enviado.');
     }
     if (!buffer.length) throw new HttpError(400, 'Arquivo vazio.');
-
     const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase().replace(/[^.a-z0-9]/g, '').slice(0, 10);
     const id = uid('doc');
     const stored = `${id}${ext ? `.${ext}` : '.bin'}`;
-
-    // O tipo é derivado da extensão: o cliente não decide como o arquivo será servido.
-    const safeMime = FILE_MIME[ext] || 'application/octet-stream';
-
     const doc = {
       id,
+      processId: process.id,
       name,
-      mime: safeMime,
+      mime: FILE_MIME[ext] || 'application/octet-stream',
       size: buffer.length,
       stored,
       addedAt: now(),
+      active: true,
+      inactiveReason: '',
     };
-
     try {
       await fs.writeFile(path.join(FILES_DIR, stored), buffer);
     } catch (err) {
       throw new HttpError(500, `Não foi possível gravar o arquivo: ${err.message}`);
     }
-
     const result = await mutate(() => {
-      requireProcess();
       state.documents.push(doc);
-      for (const criterion of state.criteria) {
+      for (const criterion of state.criteria.filter((item) => item.processId === process.id)) {
         state.checks.push({
           id: uid('chk'),
           docId: doc.id,
@@ -396,39 +809,53 @@ async function handleApi(req, res, pathname) {
           status: 'pending',
           note: '',
           updatedAt: now(),
+          authorId: null,
         });
       }
-      log(`Documento importado: ${name}`);
-      return { rev: state.rev, state, document: doc };
+      log(`Documento importado: ${name}`, { processId: process.id });
+      return { rev: state.rev, state: scopedState(process.id), document: doc };
     });
     return sendJson(res, 201, result);
   }
 
-  const docId = pathname.match(/^\/api\/documents\/([^/]+)$/);
-  if (docId) {
-    const id = decodeURIComponent(docId[1]);
+  const docIdMatch = pathname.match(/^\/api\/documents\/([^/]+)$/);
+  if (docIdMatch) {
+    const id = decodeURIComponent(docIdMatch[1]);
+    const doc = findDoc(id);
+    if (!doc) throw new HttpError(404, 'Documento não encontrado.');
     if (method === 'PATCH') {
       const body = await readJson(req);
       const result = await mutate(() => {
-        requireProcess();
-        const doc = findDoc(id);
-        if (!doc) throw new HttpError(404, 'Documento não encontrado.');
         if (body.name != null) doc.name = text(body.name, 220, 'nome do arquivo');
-        log(`Documento renomeado: ${doc.name}`);
-        return { rev: state.rev, state };
+        if (body.active != null) {
+          const active = Boolean(body.active);
+          if (!active) {
+            const reason = text(body.inactiveReason, 500, 'motivo da inatividade');
+            doc.active = false;
+            doc.inactiveReason = reason;
+            doc.inactiveAt = now();
+            doc.inactiveBy = requestContext.getStore()?.actor?.id || null;
+            log(`Documento inativado: ${doc.name} — ${reason}`, { processId: doc.processId });
+          } else {
+            doc.active = true;
+            doc.inactiveReason = '';
+            doc.inactiveAt = null;
+            doc.inactiveBy = null;
+            log(`Documento reativado: ${doc.name}`, { processId: doc.processId });
+          }
+        }
+        return { rev: state.rev, state: scopedState(doc.processId) };
       });
       return sendJson(res, 200, result);
     }
     if (method === 'DELETE') {
-      const doc = findDoc(id);
-      if (!doc) throw new HttpError(404, 'Documento não encontrado.');
       const result = await mutate(() => {
-        requireProcess();
-        state.documents = state.documents.filter((d) => d.id !== id);
-        state.checks = state.checks.filter((c) => c.docId !== id);
-        if (state.meta.lastDocId === id) state.meta.lastDocId = null;
-        log(`Documento removido: ${doc.name}`);
-        return { rev: state.rev, state };
+        state.documents = state.documents.filter((item) => item.id !== id);
+        state.checks = state.checks.filter((check) => check.docId !== id);
+        const meta = state.meta.lastDocByProcess[doc.processId];
+        if (meta === id) delete state.meta.lastDocByProcess[doc.processId];
+        log(`Documento removido: ${doc.name}`, { processId: doc.processId });
+        return { rev: state.rev, state: scopedState(doc.processId) };
       });
       try {
         await fs.unlink(path.join(FILES_DIR, doc.stored));
@@ -439,52 +866,71 @@ async function handleApi(req, res, pathname) {
     }
   }
 
-  const checkId = pathname.match(/^\/api\/checks\/([^/]+)$/);
-  if (checkId && method === 'PATCH') {
-    const id = decodeURIComponent(checkId[1]);
+  const checkIdMatch = pathname.match(/^\/api\/checks\/([^/]+)$/);
+  if (checkIdMatch && method === 'PATCH') {
+    const id = decodeURIComponent(checkIdMatch[1]);
     const body = await readJson(req);
-    if (body.status != null && !STATUSES.has(body.status)) {
+    if (body.status != null && !CHECK_STATUSES.has(body.status)) {
       throw new HttpError(400, 'Resultado de verificação inválido.');
     }
     const note = body.note != null ? optionalText(body.note, 5000, 'nota') : undefined;
-
     const result = await mutate(() => {
-      requireProcess();
-      const check = state.checks.find((c) => c.id === id);
+      const check = state.checks.find((item) => item.id === id);
       if (!check) throw new HttpError(404, 'Verificação não encontrada.');
+      const doc = findDoc(check.docId);
+      if (!doc) throw new HttpError(404, 'Documento da verificação não encontrado.');
+      if (doc.active === false) throw new HttpError(409, 'Documento inativo: reative para editar verificações.');
       const previous = check.status;
       if (body.status != null) check.status = body.status;
       if (note !== undefined) check.note = note;
       check.updatedAt = now();
-      state.meta.lastDocId = check.docId;
+      const actor = requestContext.getStore()?.actor;
+      if (actor) check.authorId = actor.id;
+      state.meta.lastDocByProcess[doc.processId] = check.docId;
       state.meta.lastCheckId = check.id;
-      const doc = findDoc(check.docId);
-      if (body.status != null && previous !== check.status && doc) {
-        const critic = state.criteria.find((c) => c.id === check.criterionId);
-        if (check.status === 'nc') log(`Não conforme: ${doc.name} — ${critic?.label || 'critério'}`);
-        else if (check.status === 'obs') log(`Observação: ${doc.name} — ${critic?.label || 'critério'}`);
-        else if (previous === 'nc' || previous === 'obs') log(`Apontamento resolvido: ${doc.name}`);
+      const criterion = state.criteria.find((item) => item.id === check.criterionId);
+      if (body.status != null && previous !== check.status) {
+        const statusLabels = {
+          ok: 'Conforme',
+          nc: 'Não conforme',
+          obs: 'Observação',
+          pending: 'Verificação reaberta',
+        };
+        log(`${statusLabels[check.status] || check.status}: ${doc.name} — ${criterion?.label || 'critério'}`, {
+          processId: doc.processId,
+        });
       }
-      return { rev: state.rev, check: { ...check } };
+      return { rev: state.rev, check: { ...check }, activity: scopedActivity(doc.processId, 12) };
     });
     return sendJson(res, 200, result);
   }
 
   if (pathname === '/api/meta' && method === 'POST') {
     const body = await readJson(req);
+    const process = requireProcess(body.processId);
     const result = await mutate(() => {
-      requireProcess();
       if (body.lastDocId !== undefined) {
         const id = body.lastDocId == null ? null : String(body.lastDocId);
-        state.meta.lastDocId = id && findDoc(id) ? id : null;
+        const doc = id ? findDoc(id) : null;
+        if (doc && doc.processId === process.id) state.meta.lastDocByProcess[process.id] = id;
+        else delete state.meta.lastDocByProcess[process.id];
       }
-      return { rev: state.rev, state };
+      return { rev: state.rev, state: scopedState(process.id) };
     });
     return sendJson(res, 200, result);
   }
 
   if (pathname === '/api/export' && method === 'GET') {
-    const body = JSON.stringify(state, null, 2);
+    const process = processFromRequest(req);
+    const payload = process
+      ? {
+          schemaVersion: 2,
+          exportedAt: now(),
+          processId: process,
+          state,
+        }
+      : state;
+    const body = JSON.stringify(payload, null, 2);
     res.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Disposition': `attachment; filename="scad-backup-${new Date().toISOString().slice(0, 10)}.json"`,
@@ -495,14 +941,14 @@ async function handleApi(req, res, pathname) {
 
   if (pathname === '/api/import' && method === 'POST') {
     const body = await readJson(req);
-    const incoming = body.state;
+    const incoming = body.state?.state || body.state || body;
     if (!incoming || typeof incoming !== 'object') throw new HttpError(400, 'Backup inválido.');
     const result = await mutate(() => {
-      state = normalizeState(incoming);
+      state = incoming.schemaVersion >= 2 ? normalizeState(incoming) : migrateV1(incoming);
       state.rev = (Number(incoming.rev) || 1) + 1;
       state.updatedAt = now();
-      log('Backup restaurado');
-      return { rev: state.rev, state };
+      log('Backup restaurado', { processId: null });
+      return { rev: state.rev, state: scopedState(null) };
     });
     return sendJson(res, 200, result);
   }
@@ -511,15 +957,18 @@ async function handleApi(req, res, pathname) {
     const body = await readJson(req);
     if (body.confirm !== true) throw new HttpError(400, 'Confirmação ausente.');
     const result = await mutate(() => {
+      const profiles = state.profiles;
       state = emptyState();
+      state.profiles = profiles;
       state.rev = 1;
-      return { rev: state.rev, state };
+      log('Dados reiniciados', { processId: null });
+      return { rev: state.rev, state: scopedState(null) };
     });
     try {
       const entries = await fs.readdir(FILES_DIR);
       await Promise.all(entries.map((entry) => fs.rm(path.join(FILES_DIR, entry), { force: true })));
     } catch {
-      /* pasta vazia ou ausente */
+      /* pasta vazia */
     }
     return sendJson(res, 200, result);
   }
@@ -530,7 +979,7 @@ async function handleApi(req, res, pathname) {
 /* --------------------------------------------------------------- arquivos */
 
 async function serveFile(req, res, stored) {
-  const doc = state.documents.find((d) => d.stored === stored);
+  const doc = state.documents.find((item) => item.stored === stored);
   if (!doc) throw new HttpError(404, 'Arquivo não encontrado.');
   const full = path.join(FILES_DIR, doc.stored);
   let stat;
@@ -539,7 +988,6 @@ async function serveFile(req, res, stored) {
   } catch {
     throw new HttpError(404, 'Arquivo não encontrado no disco.');
   }
-
   const mime = doc.mime || FILE_MIME[doc.stored.split('.').pop().toLowerCase()] || 'application/octet-stream';
   const download = new URL(req.url, 'http://localhost').searchParams.get('download') === '1';
   const INLINE_MIME = new Set([
@@ -595,7 +1043,6 @@ async function serveStatic(req, res, pathname) {
   const full = path.resolve(PUBLIC_DIR, `.${rel}`);
   const relative = path.relative(PUBLIC_DIR, full);
   if (relative.startsWith('..') || path.isAbsolute(relative)) throw new HttpError(403, 'Acesso negado.');
-
   try {
     const stat = await fs.stat(full);
     if (stat.isDirectory()) throw new HttpError(404, 'Não encontrado.');
@@ -609,7 +1056,6 @@ async function serveStatic(req, res, pathname) {
     return createReadStream(full).pipe(res);
   } catch (err) {
     if (err instanceof HttpError) throw err;
-    // fallback para SPA em rotas sem extensão (ex.: /documentos)
     if (!path.extname(rel)) {
       const index = path.join(PUBLIC_DIR, 'index.html');
       const html = await fs.readFile(index);
@@ -622,47 +1068,72 @@ async function serveStatic(req, res, pathname) {
 
 /* ------------------------------------------------------------------ HTTP */
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer((req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'same-origin');
-  try {
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    const pathname = url.pathname;
+  const actor = actorFrom(req);
+  const processId = processFromRequest(req);
+  requestContext.run({ actor, processId }, async () => {
+    try {
+      const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+      const pathname = url.pathname;
+      if (pathname.startsWith('/api/')) {
+        await handleApi(req, res, pathname, url);
+      } else if (pathname.startsWith('/files/')) {
+        await serveFile(req, res, pathname.slice('/files/'.length));
+      } else if (req.method === 'GET' || req.method === 'HEAD') {
+        await serveStatic(req, res, pathname);
+      } else {
+        throw new HttpError(405, 'Método não permitido.');
+      }
+    } catch (err) {
+      const status = err instanceof HttpError ? err.status : 500;
+      if (status === 500) console.error('[scad] erro:', err);
+      if (res.headersSent) return res.end();
+      sendJson(res, status, { error: err.message || 'Erro interno.' });
+    }
+  });
+});
 
-    if (pathname.startsWith('/api/')) {
-      await handleApi(req, res, pathname);
-    } else if (pathname.startsWith('/files/')) {
-      await serveFile(req, res, pathname.slice('/files/'.length));
-    } else if (req.method === 'GET' || req.method === 'HEAD') {
-      await serveStatic(req, res, pathname);
-    } else {
-      throw new HttpError(405, 'Método não permitido.');
+async function backupBeforeMigration(label) {
+  try {
+    await fs.mkdir(BACKUP_DIR, { recursive: true });
+    const target = path.join(BACKUP_DIR, `db-${label}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+    await fs.copyFile(DB_PATH, target);
+    console.log(`[scad] backup pré-migração: ${target}`);
+    const entries = (await fs.readdir(BACKUP_DIR)).filter((name) => name.endsWith('.json')).sort();
+    while (entries.length > 8) {
+      const old = entries.shift();
+      await fs.rm(path.join(BACKUP_DIR, old), { force: true });
     }
   } catch (err) {
-    const status = err instanceof HttpError ? err.status : 500;
-    if (status === 500) console.error('[scad] erro:', err);
-    if (res.headersSent) return res.end();
-    sendJson(res, status, { error: err.message || 'Erro interno.' });
+    console.error('[scad] não foi possível criar backup pré-migração:', err.message);
   }
-});
+}
 
 async function boot() {
   await fs.mkdir(FILES_DIR, { recursive: true });
+  let parsed = null;
+  let readError = null;
   try {
-    const raw = await fs.readFile(DB_PATH, 'utf8');
-    state = normalizeState(JSON.parse(raw));
+    parsed = JSON.parse(await fs.readFile(DB_PATH, 'utf8'));
   } catch (err) {
-    if (err?.code !== 'ENOENT') {
-      // Banco ilegível: preserva o arquivo para inspeção em vez de sobrescrever.
-      try {
-        await fs.rename(DB_PATH, `${DB_PATH}.corrupt-${Date.now()}`);
-        console.warn('[scad] db.json ilegível; cópia preservada e estado iniciado vazio.');
-      } catch {
-        /* sem arquivo para preservar */
-      }
+    readError = err;
+  }
+
+  if (!parsed) {
+    if (readError && readError.code !== 'ENOENT') {
+      await backupBeforeMigration('corrupt');
     }
     state = emptyState();
     await persist();
+  } else if ((parsed.schemaVersion || 1) < 2) {
+    await backupBeforeMigration('v1');
+    state = normalizeState(migrateV1(parsed));
+    await persist();
+    console.log('[scad] migração v1 → v2 concluída.');
+  } else {
+    state = normalizeState(parsed);
   }
 
   server.on('error', (err) => {
@@ -678,8 +1149,8 @@ async function boot() {
     const lan = lanUrls();
     const line = '─'.repeat(58);
     console.log(`\n\x1b[38;5;110m${line}\x1b[0m`);
-    console.log('  \x1b[1mSCAD\x1b[0m · Controle de Análise Documental');
-    console.log(`  v${VERSION} · dados em ${DATA_DIR}`);
+    console.log('  \x1b[1mSCAD\x1b[0m · Coleções e Processos');
+    console.log(`  v${VERSION} · schema ${state.schemaVersion} · dados em ${DATA_DIR}`);
     console.log(`\x1b[38;5;110m${line}\x1b[0m`);
     console.log(`  Local   http://localhost:${PORT}`);
     for (const item of lan) console.log(`  iPad    ${item.url}   (mesma rede Wi-Fi)`);

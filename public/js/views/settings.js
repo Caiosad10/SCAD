@@ -1,6 +1,6 @@
 import { esc, fmtFullDate, plural, stamp } from '../ui.js';
 import { icon } from '../icons.js';
-import { criteriaSorted, overall, ui } from '../store.js';
+import { criteriaSorted, overall, ui, currentProfile } from '../store.js';
 
 function accessList() {
   const health = ui.health;
@@ -64,9 +64,9 @@ export function renderSettings(state) {
     `<div class="page page--settings">` +
     `<div class="page__head"><div class="page__head-copy"><p class="eyebrow">Configuração</p>` +
     `<h2 class="page__title">Ajustes</h2>` +
-    `<p class="page__sub">Processo ${esc(proc.code || '—')} <span aria-hidden="true">·</span> criado em ${esc(
-      fmtFullDate(proc.createdAt)
-    )}</p></div></div>` +
+    `<p class="page__sub">${esc(state.collection?.name || 'Coleção')} <span aria-hidden="true">·</span> ${esc(
+      proc.name || 'Processo'
+    )} <span aria-hidden="true">·</span> criado em ${esc(fmtFullDate(proc.createdAt))}</p></div></div>` +
     `<div class="settings">` +
     `<div class="settings__col">` +
     `<section class="card">` +
@@ -78,16 +78,25 @@ export function renderSettings(state) {
     )}</span></div>` +
     `<form class="card__body" id="process-form">` +
     `<div class="field"><label for="setting-name">Nome do processo</label>` +
-    `<input id="setting-name" name="name" type="text" maxlength="180" value="${esc(proc.name || '')}" required></div>` +
+    `<input id="setting-name" name="name" type="text" maxlength="120" value="${esc(proc.name || '')}" required></div>` +
     `<div class="field"><label for="setting-desc">Descrição</label>` +
-    `<textarea id="setting-desc" name="description" rows="3" maxlength="2000">${esc(proc.description || '')}</textarea></div>` +
+    `<textarea id="setting-desc" name="description" rows="3" maxlength="1000">${esc(proc.description || '')}</textarea></div>` +
     `<div class="form-row"><button class="btn btn--primary" type="submit">${icon('check', 16)} Salvar processo</button>` +
-    `<span class="field__hint">O código ${esc(proc.code || '')} identifica o processo nas exportações.</span></div>` +
+    `<a class="btn btn--ghost btn--sm" href="#/colecoes/${esc(state.collection?.id || '')}">${icon(
+      'bookmark',
+      14
+    )} Ver coleção</a></div>` +
+    `<p class="field__hint">O código interno não aparece na interface; as exportações trazem a identificação legível do processo.</p>` +
     `</form></section>` +
     `<section class="card">` +
     `<div class="section-head"><h2 class="section-head__title">Critérios de verificação</h2>` +
     `<span class="section-head__meta">${plural(crit.length, 'critério', 'critérios')}</span></div>` +
     `<div class="card__body">` +
+    `<div class="form-row" style="margin-bottom:12px">` +
+    `<button class="btn btn--secondary btn--sm" type="button" data-action="copy-criteria" ${
+      (state.processes || []).length > 1 ? '' : 'disabled'
+    }>${icon('copy', 14)} Copiar critérios de outro processo</button>` +
+    `</div>` +
     (crit.length
       ? criteriaRows
       : `<p class="field__hint">Nenhum critério. Adicione ao menos um para gerar verificações.</p>`) +
@@ -104,6 +113,19 @@ export function renderSettings(state) {
     `</div></section>` +
     `</div>` +
     `<div class="settings__col">` +
+    `<section class="card">` +
+    `<div class="section-head"><h2 class="section-head__title">Perfil</h2>` +
+    `<span class="section-head__meta">autoria</span></div>` +
+    `<div class="card__body">` +
+    `<div class="setting-row"><div class="setting-row__copy"><strong>${esc(
+      currentProfile(state)?.name || 'Nenhum perfil escolhido'
+    )}</strong><span>${
+      currentProfile(state)?.role === 'reviewer'
+        ? 'Revisor — aprova e sinaliza verificações.'
+        : 'Analista — registra verificações e correções.'
+    } Toda alteração nova fica atribuída a este nome.</span></div>` +
+    `<button type="button" class="btn btn--secondary btn--sm" data-action="switch-profile">Trocar</button></div>` +
+    `</div></section>` +
     `<section class="card">` +
     `<div class="section-head"><h2 class="section-head__title">Dados e backup</h2>` +
     `<span class="section-head__meta">local</span></div>` +

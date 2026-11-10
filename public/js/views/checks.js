@@ -18,6 +18,7 @@ export function showNoteFor(check) {
 }
 
 export function docTagHtml(state, doc) {
+  if (doc.active === false) return stamp('na', { label: 'Inativo' });
   const st = docStats(state, doc.id);
   if (st.nc) return stamp('nc', { label: 'Apontamento' });
   if (st.obs) return stamp('obs', { label: 'Apontamento' });
@@ -26,6 +27,9 @@ export function docTagHtml(state, doc) {
 }
 
 export function docSummaryHtml(state, doc) {
+  if (doc.active === false) {
+    return `<span>Inativo</span><span aria-hidden="true">·</span>${stamp('na', { label: 'Dispensado' })}`;
+  }
   const st = docStats(state, doc.id);
   return (
     `<span>${st.done}/${st.total} verificações</span>` +
@@ -44,23 +48,25 @@ export function renderCheckRow(state, check, criterion, index, options = {}) {
     (option) =>
       `<button type="button" class="opt opt--${option.status}" data-action="set-check" ` +
       `data-id="${check.id}" data-status="${option.status}" aria-pressed="${status === option.status}" ` +
+      `${options.disabled ? 'disabled' : ''} ` +
       `aria-label="${esc(label)}: ${esc(STATUS_LABEL[option.status])}" ` +
       `title="${esc(STATUS_LABEL[option.status])} (${OPTIONS.indexOf(option) + 1})">` +
       `${statusMark(option.status, 13)}<span>${esc(option.label)}</span></button>`
   ).join('');
 
-  const noteToggle = withNote
-    ? ''
-    : `<button type="button" class="note-toggle" data-action="note-toggle" data-id="${check.id}">+ nota</button>`;
+  const noteToggle =
+    withNote || options.disabled
+      ? ''
+      : `<button type="button" class="note-toggle" data-action="note-toggle" data-id="${check.id}">+ nota</button>`;
 
   const noteBlock = withNote
     ? `<div class="check__note">` +
-      `<textarea id="note-${check.id}" data-note-id="${check.id}" rows="2" ` +
+      `<textarea id="note-${check.id}" data-note-id="${check.id}" rows="2" ${options.disabled ? 'readonly' : ''} ` +
       `aria-label="Nota de ${esc(label)}" ` +
       `placeholder="Evidência, trecho ou motivo do apontamento…">${esc(note)}</textarea>` +
       `<div class="check__note-bar">` +
       `<span class="autosave" data-save-state="saved">${note ? `salvo · ${esc(fmtTime(check.updatedAt))}` : 'vazio'}</span>` +
-      (note
+      (note && !options.disabled
         ? `<button type="button" class="note-clear" data-action="clear-note" data-id="${check.id}">limpar</button>`
         : `<span></span>`) +
       `</div></div>`
@@ -73,7 +79,7 @@ export function renderCheckRow(state, check, criterion, index, options = {}) {
       `Próximo critério ${icon('chevronDown', 14)}</button></div>`;
 
   return (
-    `<article class="check check--${status}" data-check-row="${check.id}" tabindex="0" ` +
+    `<article class="check check--${status}${options.disabled ? ' check--disabled' : ''}" data-check-row="${check.id}" tabindex="0" ` +
     `aria-label="${esc(label)}: ${esc(STATUS_LABEL[status])}">` +
     `<div class="check__head">` +
     `<span class="check__mark">${code}</span>` +
@@ -94,6 +100,15 @@ export function renderCheckRow(state, check, criterion, index, options = {}) {
 
 export function checksHeadHtml(state, doc) {
   const st = docStats(state, doc.id);
+  if (doc.active === false) {
+    return (
+      `<div class="checks__head" data-checks-head>` +
+      `<div class="checks__summary"><span class="checks__num">—</span>` +
+      `<span>verificações suspensas</span></div>` +
+      `<div class="checks__meter">${bar(0, 0, { label: 'Documento inativo' })}</div>` +
+      `</div>`
+    );
+  }
   return (
     `<div class="checks__head" data-checks-head>` +
     `<div class="checks__summary"><span class="checks__num">${st.done}</span>` +
@@ -104,6 +119,7 @@ export function checksHeadHtml(state, doc) {
 }
 
 export function doneBannerHtml(state, doc) {
+  if (doc.active === false) return '';
   const st = docStats(state, doc.id);
   if (!st.total || st.pending > 0) return '';
   return (
@@ -126,7 +142,10 @@ export function renderChecks(state, doc, options = {}) {
     .map((criterion, index) => {
       const check = byCriterion.get(criterion.id);
       if (!check) return '';
-      return renderCheckRow(state, check, criterion, index, { isLast: index === crit.length - 1 });
+      return renderCheckRow(state, check, criterion, index, {
+        isLast: index === crit.length - 1,
+        disabled: doc.active === false,
+      });
     })
     .join('');
 
