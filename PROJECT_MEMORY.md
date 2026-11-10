@@ -104,8 +104,8 @@ Coleção (ISO 9001:2015)
 - Identidade visual: papel/tinta, serifa editorial, azul institucional, cápsula escura.
 - Barra flutuante em cápsula, pílula deslizante, rótulo só no ativo, 44–48 px de alvo.
 - Transições de página com fade/slide (~130 ms + 210 ms), shell persistente.
-- Reabertura instantânea com cache de sessão; rota restaurada após recarga (iPad).
-- **Nas telas de Coleções e de Processos a barra deve desaparecer** (fora do contexto do processo); ao entrar num processo ela **surge suavemente** (fade/slide de baixo). Confirmar no desenvolvimento da Fase A.
+- Reabertura instantânea com cache de sessão + espelho em `localStorage`; rota, filtros, escopo da fila e rolagem restaurados após recarga (iPad).
+- **Nas telas de Coleções e de Processos a barra deve desaparecer** (fora do contexto do processo); ao entrar num processo ela **se expande**: a cápsula cresce de ~52% ao tamanho final em 0,7 s (`cubic-bezier(0.34, 0.9, 0.3, 1)`), ícones em cascata de 60 ms e pílula do item ativo medida em espaço de layout (divide a medida atual pela escala da animação).
 - Matriz: colunas uniformes, cabeçalho de 2 linhas, ícones 22 px com fundo tingido.
 - Cards-métrica: Documentos, Não conformes e Observações são filtros; **Verificações é apenas indicador**.
 - Critério “Não se aplica” removido da UI, legenda, atalhos (1–3) e textos.
@@ -231,9 +231,9 @@ Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
 3. A dispensa inativa: aprovação do revisor antes ou depois de sair da fila? Proposta: sai da fila como “dispensado provisório” e o revisor aprova/contesta.
 4. Documentos inativos: manter checks suspensos visíveis no detalhe (somente leitura) — confirmar.
 5. Atividade antiga sem autor: exibir como “legado” ou ocultar autor? Manter, sem inventar autoria.
-6. Barra nas telas de coleções/processos: ocultar e animar ao entrar no processo — **confirmado**; ajustar o movimento na prática.
+6. Barra nas telas de coleções/processos: ocultar e animar ao entrar no processo — **confirmado**; expansão ajustada na prática (0,7 s, revisada no iPad).
 
-**Resolvidos:** percentual ponderado por verificações; código 1+2; barra oculta nas listas e animada ao entrar no processo.
+**Resolvidos:** percentual ponderado por verificações; código 1+2; barra oculta nas listas e expandindo ao entrar no processo; nome da coleção repetido no cabeçalho; recarga do iPad no meio da navegação.
 
 ---
 
@@ -272,6 +272,7 @@ Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
 | 2026-11-10 | “Não se aplica” removido; setas de critério corrigidas; decisões de coleções, revisão e dispensa registradas. |
 | 2026-11-10 | Git iniciado; v1.0 commitada e tagueada (`294b890`); bundle em `backups/`; percentual ponderado e código 1+2 confirmados. |
 | 2026-11-10 | Fase A v2 implementada em `fase-a`: schema coleções/processos, migração com backup, perfis/autoria, documento Ativo/Inativo, telas de coleções, critérios copiáveis e barra oculta/animada. Deploy pendente de confirmação. |
+| 2026-11-10 | Correções do uso no iPad: navegação interna por `pushState` (sem recarga), sessão persistida (tela/filtros/fila/rolagem), tela de carregamento só após 220 ms com cache espelhado em `localStorage`, barra expandindo em 0,7 s e cabeçalho sem nome repetido. Validado no Edge headless em viewport de iPad (41 documentos, 240 verificações). |
 
 ---
 

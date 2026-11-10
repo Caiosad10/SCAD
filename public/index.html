@@ -43,6 +43,18 @@
       <div class="noscript">O SCAD precisa de JavaScript para funcionar.</div>
     </noscript>
 
+    <script>
+      // A tela de carregamento só aparece quando a abertura demora de verdade:
+      // em recargas com estado em cache o app pinta antes e nada pisca.
+      (function () {
+        setTimeout(function () {
+          var boot = document.getElementById('boot');
+          if (boot && boot.parentNode && !boot.classList.contains('is-hidden')) {
+            boot.classList.add('is-visible');
+          }
+        }, 220);
+      })();
+    </script>
     <script type="module" src="/js/app.js"></script>
   </body>
 </html>

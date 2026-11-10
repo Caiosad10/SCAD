@@ -89,6 +89,9 @@ let navigating = false;
 let pendingRoute = false;
 
 const LAST_ROUTE_KEY = 'scad:lastRoute:v1';
+const SESSION_KEY = 'scad:session:v1';
+const SESSION_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+const NAV_ENTER_MS = 820;
 
 let navReady = false;
 let navEl = null;
@@ -96,45 +99,115 @@ let pillEl = null;
 let pillTrack = 0;
 let navActive = null;
 let mastheadMode = null;
+let pendingScrollY = 0;
+let scrollSaveTimer = 0;
 
 /* ---------------------------------------------------------------- boot */
 
 boot();
+
+/** Salva a tela, os filtros e a rolagem para reabrir exatamente onde o usuário parou. */
+function saveSession() {
+  try {
+    const hash = location.hash;
+    if (!hash || hash === '#/' || hash === '#') {
+      localStorage.removeItem(SESSION_KEY);
+      return;
+    }
+    localStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({
+        hash,
+        processId: getState()?.process?.id || null,
+        docFilter: ui.docFilter || 'all',
+        docQuery: ui.docQuery || '',
+        findFilter: ui.findFilter || 'all',
+        findQuery: ui.findQuery || '',
+        queueAll: Boolean(ui.queueAll),
+        scrollY: Math.round(window.scrollY || 0),
+        at: Date.now(),
+      })
+    );
+  } catch {
+    /* armazenamento indisponível */
+  }
+}
 
 function rememberRoute() {
   try {
     const hash = location.hash;
     if (!hash || hash === '#/' || hash === '#') {
       localStorage.removeItem(LAST_ROUTE_KEY);
+      localStorage.removeItem(SESSION_KEY);
       return;
     }
     localStorage.setItem(LAST_ROUTE_KEY, JSON.stringify({ hash, at: Date.now() }));
+    saveSession();
   } catch {
     /* armazenamento indisponível */
   }
 }
 
+function scheduleSessionSave() {
+  clearTimeout(scrollSaveTimer);
+  scrollSaveTimer = setTimeout(saveSession, 350);
+}
+
+/** Devolve filtros, fila e rolagem da última sessão (recarga ou reabertura no iPad). */
+function restoreSession() {
+  let saved;
+  try {
+    saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+  } catch {
+    return false;
+  }
+  if (!saved || typeof saved !== 'object') return false;
+  if (Date.now() - Number(saved.at || 0) > SESSION_MAX_AGE) return false;
+  if (saved.processId && ui.activeProcessId && saved.processId !== ui.activeProcessId) return false;
+  if (typeof saved.docFilter === 'string') ui.docFilter = saved.docFilter;
+  if (typeof saved.docQuery === 'string') ui.docQuery = saved.docQuery;
+  if (typeof saved.findFilter === 'string') ui.findFilter = saved.findFilter;
+  if (typeof saved.findQuery === 'string') ui.findQuery = saved.findQuery;
+  ui.queueAll = Boolean(saved.queueAll);
+  pendingScrollY = Math.max(0, Number(saved.scrollY) || 0);
+  return true;
+}
+
 function restoreLastRoute() {
   try {
     if (location.hash && location.hash !== '#/' && location.hash !== '#') return;
-    const navEntry = performance.getEntriesByType?.('navigation')?.[0];
-    const standalone =
-      window.navigator.standalone === true ||
-      window.matchMedia?.('(display-mode: standalone)')?.matches === true;
-    const reloaded = navEntry ? navEntry.type === 'reload' || navEntry.type === 'back_forward' : false;
-    if (!standalone && !reloaded) return;
-
-    const saved = JSON.parse(localStorage.getItem(LAST_ROUTE_KEY) || 'null');
-    if (!saved?.hash || !saved.hash.startsWith('#/') || saved.hash === '#/') return;
-    if (Date.now() - Number(saved.at || 0) > 24 * 60 * 60 * 1000) return;
+    const candidates = [];
+    for (const key of [SESSION_KEY, LAST_ROUTE_KEY]) {
+      try {
+        candidates.push(JSON.parse(localStorage.getItem(key) || 'null'));
+      } catch {
+        /* ignora entrada inválida */
+      }
+    }
+    const saved = candidates.find(
+      (item) =>
+        item?.hash &&
+        item.hash.startsWith('#/') &&
+        item.hash !== '#/' &&
+        Date.now() - Number(item.at || 0) <= SESSION_MAX_AGE &&
+        (!item.processId || !ui.activeProcessId || item.processId === ui.activeProcessId)
+    );
+    if (!saved) return;
     history.replaceState(null, '', saved.hash);
   } catch {
     /* sem rota salva */
   }
 }
 
+function restoreScroll() {
+  const y = pendingScrollY;
+  pendingScrollY = 0;
+  if (y > 0) requestAnimationFrame(() => window.scrollTo(0, y));
+}
+
 async function boot() {
   bindEvents();
+  restoreSession();
   restoreLastRoute();
 
   let paintedFromCache = false;
@@ -146,6 +219,7 @@ async function boot() {
     parseRoute();
     renderAll();
     revealApp(true);
+    restoreScroll();
     paintedFromCache = true;
   }
 
@@ -184,6 +258,7 @@ async function boot() {
   rememberRoute();
   renderAll({ preserveScroll: paintedFromCache });
   revealApp();
+  if (!paintedFromCache) restoreScroll();
   if (!profile) showProfilePicker(base.profiles || []);
   setInterval(syncIfIdle, 12000);
 }
@@ -204,15 +279,16 @@ function revealApp(instant = false) {
     bootEl.remove();
     return;
   }
-  if (!bootEl.classList.contains('is-hidden')) {
-    bootEl.classList.add('is-hidden');
-    setTimeout(() => bootEl.remove(), 450);
-  }
+  bootEl.classList.remove('is-visible');
+  bootEl.classList.add('is-hidden');
+  setTimeout(() => bootEl.remove(), 420);
 }
 
 function showBootError(err) {
   const bootEl = document.getElementById('boot');
   if (!bootEl) return;
+  bootEl.classList.add('is-visible');
+  bootEl.classList.remove('is-hidden');
   bootEl.innerHTML =
     `<div class="boot__panel boot__error">` +
     `<span class="boot__mark">SCAD</span>` +
@@ -264,14 +340,21 @@ function parseRoute() {
 }
 
 function navigate(hash, { force = false } = {}) {
-  if (location.hash === hash) {
+  const current = location.hash || '#/';
+  if (current === hash) {
     if (force) {
       parseRoute();
       renderAll();
     }
     return;
   }
-  location.hash = hash;
+  try {
+    history.pushState(null, '', hash);
+  } catch {
+    location.hash = hash;
+    return;
+  }
+  handleRouteChange();
 }
 
 function routeKey() {
@@ -315,13 +398,18 @@ async function handleRouteChange() {
         { duration: 130, easing: 'cubic-bezier(0.4, 0, 0.9, 0.4)', fill: 'forwards' }
       );
       try {
-        await leave.finished;
+        await Promise.race([leave.finished, new Promise((done) => setTimeout(done, 400))]);
       } catch {
         /* animação cancelada */
       }
     }
 
-    renderAll();
+    try {
+      renderAll();
+    } catch (err) {
+      console.error(err);
+      toast('Não foi possível montar esta tela.', 'err');
+    }
     mainEl.getAnimations().forEach((animation) => animation.cancel());
 
     if (canAnimate) {
@@ -504,13 +592,17 @@ function renderMasthead() {
   const process = state.process;
   const back = mastEl.querySelector('[data-mast-back]');
   const backLabel = mastEl.querySelector('[data-mast-back-label]');
-  if (back && collection) back.setAttribute('href', `#/colecoes/${collection.id}`);
-  if (backLabel) backLabel.textContent = collection ? collection.name : 'Processos';
+  if (back) {
+    back.setAttribute('href', `#/colecoes/${collection?.id || ''}`);
+    back.setAttribute('title', collection ? `Voltar para os processos de ${collection.name}` : 'Voltar para os processos');
+    back.setAttribute('aria-label', collection ? `Voltar para os processos de ${collection.name}` : 'Voltar para os processos');
+  }
+  if (backLabel) backLabel.textContent = 'Voltar para processos';
   const eyebrow = mastEl.querySelector('[data-mast-eyebrow]');
-  const eyebrowText = `${collection ? collection.name : 'Coleção'} · ${screenLabel()}`;
+  const eyebrowText = screenLabel();
   if (eyebrow && eyebrow.textContent !== eyebrowText) eyebrow.textContent = eyebrowText;
   const title = mastEl.querySelector('[data-mast-title]');
-  const titleText = `${collection ? collection.name : ''} - ${process.name}`.trim();
+  const titleText = process.name;
   if (title && title.textContent !== titleText) title.textContent = titleText;
   const meta = mastEl.querySelector('[data-mast-meta]');
   if (meta) meta.innerHTML = metaLine(state);
@@ -573,7 +665,11 @@ function ensureNav() {
     pillEl = navSlot.querySelector('.nav__pill');
     updatePill();
     const shell = navSlot.querySelector('.nav-shell');
-    setTimeout(() => shell?.classList.remove('nav-shell--enter'), 260);
+    setTimeout(() => {
+      shell?.classList.remove('nav-shell--enter');
+      updatePill();
+      trackPill(260);
+    }, NAV_ENTER_MS);
   }
   return true;
 }
@@ -587,11 +683,15 @@ function updatePill() {
   }
   const navRect = navEl.getBoundingClientRect();
   const rect = active.getBoundingClientRect();
+  // A cápsula pode estar escalada durante a entrada: converter a medida atual
+  // para o espaço de layout mantém a pílula no lugar certo mesmo animando.
+  const scale = navEl.offsetWidth ? navRect.width / navEl.offsetWidth : 1;
+  const factor = scale > 0 ? scale : 1;
   pillEl.style.opacity = '1';
-  pillEl.style.top = `${rect.top - navRect.top - navEl.clientTop}px`;
-  pillEl.style.height = `${rect.height}px`;
-  pillEl.style.width = `${rect.width}px`;
-  pillEl.style.transform = `translate3d(${rect.left - navRect.left - navEl.clientLeft}px, 0, 0)`;
+  pillEl.style.top = `${(rect.top - navRect.top) / factor - navEl.clientTop}px`;
+  pillEl.style.height = `${rect.height / factor}px`;
+  pillEl.style.width = `${rect.width / factor}px`;
+  pillEl.style.transform = `translate3d(${(rect.left - navRect.left) / factor - navEl.clientLeft}px, 0, 0)`;
 }
 
 function trackPill(duration = 320) {
@@ -654,9 +754,19 @@ function bindEvents() {
     handleRouteChange();
   });
 
+  window.addEventListener('popstate', () => {
+    handleRouteChange();
+  });
+
   window.addEventListener('resize', () => {
     if (navReady) updatePill();
   });
+
+  window.addEventListener('scroll', () => {
+    if (!getState()?.process) return;
+    clearTimeout(scrollSaveTimer);
+    scrollSaveTimer = setTimeout(saveSession, 500);
+  }, { passive: true });
 
   window.addEventListener('online', () => toast('Conexão restabelecida.', 'ok'));
   window.addEventListener('offline', () => toast('Sem conexão com o servidor local.', 'err'));
@@ -673,15 +783,31 @@ function bindEvents() {
     });
   });
 
+  // Navegação interna sempre pela mesma página: no iPad o Safari recarregava o
+  // documento ao seguir links de hash (tela de carregamento e filtros perdidos).
+  document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.target instanceof Element ? event.target.closest('a[href^="#"]') : null;
+    if (!link) return;
+    if (link.target && link.target !== '' && link.target !== '_self') return;
+    const hash = link.getAttribute('href');
+    if (!hash || hash === '#') return;
+    event.preventDefault();
+    navigate(hash);
+  });
+
   document.addEventListener('input', (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
     if (target.matches('[data-filter="doc-query"]')) {
       ui.docQuery = target.value;
       refreshDocList();
+      scheduleSessionSave();
     } else if (target.matches('[data-filter="find-query"]')) {
       ui.findQuery = target.value;
       refreshFindings();
+      scheduleSessionSave();
     } else if (target.matches('[data-note-id]')) {
       queueNote(target);
     }
@@ -815,12 +941,9 @@ async function openProcess(processId) {
     configureApi({ process: processId, actor: currentProfile()?.id || null });
     ui.docFilter = 'all';
     ui.docQuery = '';
-    if (location.hash === '#/' || location.hash === '') {
-      parseRoute();
-      renderAll();
-    } else {
-      location.hash = '#/';
-    }
+    ui.queueAll = false;
+    saveSession();
+    navigate('#/', { force: true });
   } catch (err) {
     toast(err.message, 'err');
   }
@@ -933,12 +1056,11 @@ function showNewProcess(collectionId) {
         configureApi({ process: res.createdProcess.id });
       }
       dialog.close();
-      if (location.hash === '#/') {
-        parseRoute();
-        renderAll();
-      } else {
-        location.hash = '#/';
-      }
+      ui.docFilter = 'all';
+      ui.docQuery = '';
+      ui.queueAll = false;
+      saveSession();
+      navigate('#/', { force: true });
       toast('Processo criado.');
     } catch (err) {
       toast(err.message, 'err');
@@ -1027,15 +1149,18 @@ const ACTIONS = {
   },
   'filter-docs': (el) => {
     ui.docFilter = el.dataset.filter || 'all';
+    saveSession();
     renderAll({ preserveScroll: true });
   },
   'clear-doc-filters': () => {
     ui.docFilter = 'all';
     ui.docQuery = '';
+    saveSession();
     renderAll({ preserveScroll: true });
   },
   'filter-findings': (el) => {
     ui.findFilter = el.dataset.filter || 'all';
+    saveSession();
     refreshFindings();
     document.querySelectorAll('[data-action="filter-findings"]').forEach((button) => {
       button.setAttribute('aria-pressed', String(button.dataset.filter === ui.findFilter));
@@ -1049,10 +1174,12 @@ const ACTIONS = {
   'clear-finding-filters': () => {
     ui.findFilter = 'all';
     ui.findQuery = '';
+    saveSession();
     renderAll({ preserveScroll: true });
   },
   'queue-scope': (el) => {
     ui.queueAll = el.dataset.scope === 'all';
+    saveSession();
     renderAll({ preserveScroll: true });
   },
   'set-check': (el) => setCheckStatus(el.dataset.id, el.dataset.status, { focusNote: true }),

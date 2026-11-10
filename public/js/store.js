@@ -3,6 +3,8 @@
 let state = null;
 
 const CACHE_PREFIX = 'scad:state:v2';
+const CACHE_MIRROR = 'scad:state:v2:mirror';
+const CACHE_MIRROR_MAX_AGE = 3 * 24 * 60 * 60 * 1000;
 let cacheTimer = null;
 
 function readStored(key) {
@@ -57,7 +59,15 @@ function scheduleCache() {
   cacheTimer = setTimeout(() => {
     try {
       if (state?.process?.id) {
-        sessionStorage.setItem(`${CACHE_PREFIX}:${state.process.id}`, JSON.stringify(state));
+        const payload = JSON.stringify(state);
+        sessionStorage.setItem(`${CACHE_PREFIX}:${state.process.id}`, payload);
+        // Espelho no localStorage: no iPad o Safari pode descartar a sessão ao
+        // recarregar/reabrir; assim a tela ainda abre antes do servidor.
+        localStorage.setItem(
+          `${CACHE_MIRROR}:${state.process.id}`,
+          JSON.stringify({ at: Date.now(), state })
+        );
+        pruneMirrors(state.process.id);
       }
     } catch {
       /* cheio/bloqueado */
@@ -65,16 +75,57 @@ function scheduleCache() {
   }, 250);
 }
 
+/** Mantém no máximo as cópias recentes, para o localStorage não crescer sem limite. */
+function pruneMirrors(keepId) {
+  try {
+    const entries = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith(`${CACHE_MIRROR}:`)) continue;
+      let at = 0;
+      try {
+        at = Number(JSON.parse(localStorage.getItem(key) || 'null')?.at || 0);
+      } catch {
+        /* entrada inválida */
+      }
+      entries.push({ key, at, id: key.slice(CACHE_MIRROR.length + 1) });
+    }
+    entries
+      .filter((entry) => entry.id !== keepId && Date.now() - entry.at > CACHE_MIRROR_MAX_AGE)
+      .forEach((entry) => localStorage.removeItem(entry.key));
+    if (entries.length > 6) {
+      entries
+        .filter((entry) => entry.id !== keepId)
+        .sort((a, b) => a.at - b.at)
+        .slice(0, entries.length - 6)
+        .forEach((entry) => localStorage.removeItem(entry.key));
+    }
+  } catch {
+    /* storage bloqueado */
+  }
+}
+
+function parseCached(raw, pid, wrapped) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const cached = wrapped ? parsed?.state : parsed;
+    if (wrapped && Date.now() - Number(parsed?.at || 0) > CACHE_MIRROR_MAX_AGE) return null;
+    if (!cached || cached.process?.id !== pid || !Array.isArray(cached.checks)) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
 export function readCachedState() {
   if (typeof sessionStorage === 'undefined') return null;
   try {
     const pid = ui.activeProcessId;
     if (!pid) return null;
-    const raw = sessionStorage.getItem(`${CACHE_PREFIX}:${pid}`);
-    if (!raw) return null;
-    const cached = JSON.parse(raw);
-    if (!cached || cached.process?.id !== pid || !Array.isArray(cached.checks)) return null;
-    return cached;
+    const fromSession = parseCached(sessionStorage.getItem(`${CACHE_PREFIX}:${pid}`), pid, false);
+    if (fromSession) return fromSession;
+    return parseCached(localStorage.getItem(`${CACHE_MIRROR}:${pid}`), pid, true);
   } catch {
     return null;
   }

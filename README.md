@@ -25,12 +25,15 @@ Um caderno de trabalho local para **organizar coleções e processos, importar d
 
 ### Atualizações (10/11/2026)
 
-- Navegação com **transição suave** entre telas e cápsula com **pílula deslizante**; o shell (cabeçalho e barra) não é mais recriado a cada troca.
-- **Reabertura instantânea**: o estado é guardado na sessão do navegador e a tela aparece antes mesmo da resposta do servidor — fim da tela de carregamento no iPad em recarregamentos.
+- Navegação com **transição suave** entre telas e cápsula com **pílula deslizante**; o shell (cabeçalho e barra) não é mais recriado a cada troca. Links internos usam `history.pushState`: trocar de tela **nunca recarrega** o documento no iPad.
+- **Barra que se expande**: ao entrar num processo a cápsula cresce de ~52% até o tamanho final em ~0,7 s, com os ícones surgindo em cascata e a pílula do item ativo já no lugar.
+- **Reabertura instantânea**: o estado (e um espelho no `localStorage`) é guardado no navegador; na recarga a tela aparece antes da resposta do servidor e a tela de carregamento só surge se a abertura demorar mais de ~220 ms — em recargas normais ela **não pisca**.
+- **Sessão restaurada**: rota, filtros de documentos/apontamentos, escopo da fila (Pendentes/Todos) e rolagem voltam exatamente como estavam ao reabrir o app.
+- **Cabeçalho sem repetição**: “Voltar para processos” (com o nome da coleção no `title`), sobrancelha com a tela atual e título apenas com o nome do processo.
 - **Matriz de verificação** com colunas uniformes, nomes de critério em duas linhas, ícones maiores e fundo tingido por estado. O wrapper que faltava para aplicar o CSS da tabela foi corrigido.
 - **Cards de métrica clicáveis**: Documentos, Não conformes (abre apontamentos já filtrados) e Observações (idem). “Verificações” é apenas indicador.
 - **Fluxo de verificação contínuo**: ao marcar Não conforme/Observação a nota recebe o foco (sem recarregar a linha), e cada critério tem um atalho “Próximo critério” que rola e foca o seguinte sem sair do documento.
-- **Retomada após recarga**: se o Safari/iPad recarregar a página, ela volta ao documento em que você estava (rota salva localmente), em vez de abrir no painel.
+- **Retomada após recarga**: se o Safari/iPad recarregar a página, ela volta ao documento em que você estava, com o mesmo filtro e a mesma rolagem, em vez de abrir no painel.
 
 ---
 

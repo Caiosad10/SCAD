@@ -120,12 +120,20 @@ p {
   display: grid;
   place-items: center;
   background: var(--paper);
-  transition: opacity 0.32s var(--ease), visibility 0.32s;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.boot.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.3s var(--ease);
 }
 
 .boot.is-hidden {
   opacity: 0;
   visibility: hidden;
+  transition: opacity 0.28s var(--ease), visibility 0.28s;
 }
 
 .boot__panel {
@@ -421,6 +429,7 @@ p {
   pointer-events: none;
   z-index: 0;
   will-change: transform, width;
+  transition: opacity 0.22s var(--ease);
 }
 
 .nav__link {
@@ -4100,7 +4109,44 @@ p {
 }
 
 .nav-shell--enter {
-  animation: nav-enter 0.24s var(--ease);
+  animation: nav-shell-enter 0.5s var(--ease) both;
+}
+
+.nav-shell--enter .nav {
+  transform-origin: 50% 100%;
+  animation: nav-capsule-enter 0.7s cubic-bezier(0.34, 0.9, 0.3, 1) both;
+}
+
+.nav-shell--enter .nav__link {
+  animation: nav-link-enter 0.46s var(--ease) both;
+}
+
+.nav-shell--enter .nav__link:nth-child(2) {
+  animation-delay: 0.06s;
+}
+
+.nav-shell--enter .nav__link:nth-child(3) {
+  animation-delay: 0.12s;
+}
+
+.nav-shell--enter .nav__link:nth-child(4) {
+  animation-delay: 0.18s;
+}
+
+.nav-shell--enter .nav__link:nth-child(5) {
+  animation-delay: 0.24s;
+}
+
+.nav-shell--enter .nav__link:nth-child(6) {
+  animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-shell--enter,
+  .nav-shell--enter .nav,
+  .nav-shell--enter .nav__link {
+    animation: none;
+  }
 }
 
 body.nav-hidden .content {
@@ -4113,10 +4159,38 @@ body.nav-hidden .content {
   }
 }
 
-@keyframes nav-enter {
+@keyframes nav-shell-enter {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.96);
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes nav-capsule-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.52, 0.72);
+  }
+  60% {
+    opacity: 1;
+  }
+  82% {
+    transform: scale(1.012, 1.006);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes nav-link-enter {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
   }
   to {
     opacity: 1;
