@@ -1,0 +1,109 @@
+/* ==========================================================================
+   SCAD — tokens
+   Linguagem: arquivo editorial. Papel, tinta, azul institucional e lacre.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* superfícies ------------------------------------------------------- */
+  --paper: #f1eee3;
+  --paper-deep: #e9e4d6;
+  --card: #fbf9f2;
+  --card-soft: #f4f1e7;
+  --card-sink: #ede9dc;
+
+  /* tinta ------------------------------------------------------------- */
+  --ink: #131c23;
+  --ink-2: #2b3741;
+  --ink-3: #48545d;
+  --muted: #5f686e;
+  --muted-soft: #7c848a;
+
+  /* linhas ------------------------------------------------------------ */
+  --line: rgba(19, 28, 35, 0.14);
+  --line-soft: rgba(19, 28, 35, 0.08);
+  --line-strong: rgba(19, 28, 35, 0.28);
+
+  /* identidade -------------------------------------------------------- */
+  --blue: #23527a;
+  --blue-strong: #173b59;
+  --blue-soft: #e3ebf1;
+  --seal: #a33f2c;
+  --seal-soft: #f6e7e1;
+
+  /* estados ----------------------------------------------------------- */
+  --ok: #2a6a4d;
+  --ok-soft: #e3ede5;
+  --nc: #a33f2c;
+  --nc-soft: #f6e7e1;
+  --obs: #7d5a16;
+  --obs-soft: #f4ecd8;
+  --na: #5a636a;
+  --na-soft: #ecece7;
+
+  /* navegação flutuante ----------------------------------------------- */
+  --nav-bg: rgba(12, 19, 25, 0.9);
+  --nav-border: rgba(255, 255, 255, 0.1);
+  --nav-ink: #a7b0b7;
+  --nav-active: #f7f4eb;
+  --grad-from: #3d6f99;
+  --grad-to: #1a3a55;
+
+  /* tipografia -------------------------------------------------------- */
+  --font-serif: "Iowan Old Style", "Palatino Linotype", "Charter", Palatino,
+    "Book Antiqua", Georgia, serif;
+  --font-sans: "Avenir Next", "Segoe UI Variable Text", "Segoe UI", system-ui,
+    -apple-system, "Helvetica Neue", sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --t-display: clamp(1.9rem, 1.25rem + 1.9vw, 2.35rem);
+  --t-title: clamp(1.5rem, 1.15rem + 1vw, 1.8rem);
+  --t-heading: 1.125rem;
+  --t-body: 0.9375rem;
+  --t-small: 0.8125rem;
+  --t-caption: 0.75rem;
+  --t-overline: 0.625rem;
+
+  /* espaçamento ------------------------------------------------------- */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s8: 32px;
+  --s10: 40px;
+  --s12: 48px;
+  --s16: 64px;
+
+  /* raios ------------------------------------------------------------- */
+  --r-xs: 4px;
+  --r-sm: 8px;
+  --r-md: 11px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-pill: 9999px;
+
+  /* elevação ---------------------------------------------------------- */
+  --shadow-1: 0 1px 1px rgba(19, 28, 35, 0.04), 0 10px 30px -24px rgba(19, 28, 35, 0.55);
+  --shadow-2: 0 2px 2px rgba(19, 28, 35, 0.04), 0 18px 44px -22px rgba(19, 28, 35, 0.4);
+  --shadow-nav: 0 24px 48px -12px rgba(0, 0, 0, 0.55), 0 2px 0 rgba(255, 255, 255, 0.04) inset;
+  --focus: 0 0 0 2px var(--card), 0 0 0 4px var(--blue);
+
+  /* movimento --------------------------------------------------------- */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --t-fast: 140ms;
+  --t-base: 220ms;
+
+  --content-max: 1180px;
+  --header-max: 1180px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 1ms;
+    --t-base: 1ms;
+  }
+}

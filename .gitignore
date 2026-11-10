@@ -1,0 +1,14 @@
+data/
+data-demo/
+.tmp-data/
+.demo-files/
+.edge-profile/
+.edge-qa/
+node_modules/
+*.log
+
+.qa-data/
+.edge-qa2/
+.edge-qa3/
+backups/
+shots/downloads/

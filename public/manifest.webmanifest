@@ -1,0 +1,25 @@
+{
+  "name": "SCAD — Controle de Análise Documental",
+  "short_name": "SCAD",
+  "description": "Gestão de documentos, verificações, conformidades e apontamentos.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F1EEE3",
+  "theme_color": "#101A21",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}
