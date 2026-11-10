@@ -8,6 +8,18 @@ Um caderno de trabalho local para **importar documentos, verificar critérios, r
 
 > Experimento de produto e de interface: valida o fluxo de análise documental (50+ documentos, vários checks por documento) e a linguagem visual descrita em `sistema_interface_reutilizavel.md` e `guia-barra-menu-flutuante.md` — shell, cards, stamps de estado, matriz de verificação e barra flutuante em cápsula.
 
+### Versionamento
+
+- Repositório: `https://github.com/Caiosad10/SCAD.git`
+- Estado **v1.0** (produção antes da Fase A): commit `294b890`, tag `v1.0`; bundle de segurança em `backups/scad-v1.0.bundle`.
+- `data/`, `backups/` e cópias de QA não entram no Git.
+- Push pendente de rede/credenciais:
+  ```bash
+  git push -u origin master
+  git push origin v1.0
+  ```
+- Próxima fase (schema v2) será feita em branch `fase-a`, testada em cópia e só então mesclada com tag `v2.0`.
+
 ### Atualizações (10/11/2026)
 
 - Navegação com **transição suave** entre telas e cápsula com **pílula deslizante**; o shell (cabeçalho e barra) não é mais recriado a cada troca.

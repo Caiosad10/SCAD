@@ -110,14 +110,13 @@ Coleção (ISO 9001:2015)
 - Cards-métrica: Documentos, Não conformes e Observações são filtros; **Verificações é apenas indicador**.
 - Critério “Não se aplica” removido da UI, legenda, atalhos (1–3) e textos.
 - Ajustes → Critérios: setas explícitas para cima/baixo (não usar arcos rotacionados).
-- `PRT-A575` (código aleatório interno) **sai do cabeçalho**. Opções em aberto: não exibir código; código legível `${COLEÇÃO}-${PROCESSO}`; sequência por coleção. Manter id oculto para integridade.
+- `PRT-A575` (código aleatório interno) **sai do cabeçalho**. Formato confirmado: **opção 1 + 2** — id interno oculto (integridade) e código legível no padrão `ISO9001-DC`, exibido apenas em exportação/auditoria, não na interface.
 
-### Percentual da coleção
+### Percentual da coleção — confirmado
 
-- Recomendação: **ponderado por verificações** (ou por documentos concluídos), não média simples de processos.
-- Exemplo: 2 processos, 10 documentos cada (20 no total), 5 verificados em cada ⇒ **10/20 = 50%** na coleção; cada processo 50%. O valor 25% não corresponde a essa contagem.
-- Ponderar evita distorção quando um processo tem muito mais documentos que outro.
-- Documentos inativos contam como verificados; seus checks suspensos não entram no denominador.
+- **Ponderado por verificações** (não média simples entre processos).
+- Exemplo: 2 processos com 10 documentos cada (20 no total), 5 verificados em cada ⇒ **10/20 = 50%** na coleção; cada processo 50%.
+- Documentos inativos contam como verificados; seus checks suspensos saem do denominador.
 
 ---
 
@@ -205,18 +204,31 @@ Migração: adicionar `schemaVersion`, `profiles`, `collections`, `processes`, `
 
 ## 8. Decisões em aberto
 
-1. Percentual da coleção: ponderado por verificações (recomendado) ou por documentos? Confirmar.
-2. Código legível: `${COLEÇÃO}-${PROCESSO}` fixo, editável ou sequencial? Exibir na interface ou só exportar?
-3. Barra some nas telas de coleções/processos e aparece ao entrar no processo — confirmar animação (fade/slide).
-4. Fila de revisão: card no painel + filtros na lista (recomendado) ou outra navegação?
-5. Nomes exatos dos perfis e como cadastrar/trocar (por dispositivo).
-6. A dispensa inativa: aprovação do revisor antes ou depois de sair da fila? Proposta: sai da fila como “dispensado provisório” e o revisor aprova/contesta.
-7. Documentos inativos: manter checks suspensos visíveis no detalhe (somente leitura) — confirmar.
-8. Atividade antiga sem autor: exibir como “legado” ou ocultar autor? Manter, sem inventar autoria.
+1. Fila de revisão: card no painel + filtros na lista (recomendado) ou outra navegação?
+2. Nomes exatos dos perfis e como cadastrar/trocar (por dispositivo) — Sergio e Diogenes já definidos.
+3. A dispensa inativa: aprovação do revisor antes ou depois de sair da fila? Proposta: sai da fila como “dispensado provisório” e o revisor aprova/contesta.
+4. Documentos inativos: manter checks suspensos visíveis no detalhe (somente leitura) — confirmar.
+5. Atividade antiga sem autor: exibir como “legado” ou ocultar autor? Manter, sem inventar autoria.
+6. Barra nas telas de coleções/processos: ocultar e animar ao entrar no processo — **confirmado**; ajustar o movimento na prática.
+
+**Resolvidos:** percentual ponderado por verificações; código 1+2; barra oculta nas listas e animada ao entrar no processo.
 
 ---
 
-## 9. Protocolo de alteração em produção
+## 9. Versionamento
+
+- Repositório remoto: `https://github.com/Caiosad10/SCAD.git`
+- Estado **v1.0** (produção antes da Fase A): commit `294b890`, tag `v1.0`.
+- Bundle local de segurança: `backups/scad-v1.0.bundle` (contém todo o histórico e tags).
+- `data/`, `backups/` e cópias de QA ficam fora do Git.
+- Push pendente por indisponibilidade de rede/credenciais no ambiente do agente. Quando houver rede:
+  ```bash
+  git push -u origin master
+  git push origin v1.0
+  ```
+- A Fase A deve ser desenvolvida em branch `fase-a`, testada em cópia e só então mesclada em `master` com nova tag (`v2.0`).
+
+## 10. Protocolo de alteração em produção
 
 1. **Nunca** testar reset/importação/demo no banco de produção.
 2. Backup de `data/db.json` + `data/files` + código (`server.mjs`, `public/`) antes de mudanças de schema.
@@ -228,7 +240,7 @@ Migração: adicionar `schemaVersion`, `profiles`, `collections`, `processes`, `
 
 ---
 
-## 10. Diário de mudanças
+## 11. Diário de mudanças
 
 | Data | Mudança |
 |---|---|
@@ -236,10 +248,11 @@ Migração: adicionar `schemaVersion`, `profiles`, `collections`, `processes`, `
 | 2026-11-10 | Transições suaves, pílula deslizante, cache de boot, matriz reformulada, cards-filtro, card Verificações só indicador. |
 | 2026-11-10 | Fluxo de verificação: nota com foco, “Próximo critério”, fim do re-render que fechava o teclado, restauração de rota após recarga. |
 | 2026-11-10 | “Não se aplica” removido; setas de critério corrigidas; decisões de coleções, revisão e dispensa registradas. |
+| 2026-11-10 | Git iniciado; v1.0 commitada e tagueada (`294b890`); bundle em `backups/`; percentual ponderado e código 1+2 confirmados. |
 
 ---
 
-## 11. Limitações conhecidas
+## 12. Limitações conhecidas
 
 - Um processo ativo por instalação (Fase A corrige).
 - Sem autenticação; confiança na rede local. Não expor na internet.
