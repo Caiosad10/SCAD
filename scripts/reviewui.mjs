@@ -1,4 +1,4 @@
-/** Testa a revisão na interface: Diogenes aprova/sinaliza, Sergio vê, presença e cascata. */
+/** Testa a revisão na interface: Diogenes aprova/sinaliza, Sergio vê, presença na matriz e cascata. */
 import { writeFileSync } from 'node:fs';
 
 const CDP = process.env.CDP || 'http://127.0.0.1:9334';
@@ -71,8 +71,8 @@ loaded = waitFor('Page.loadEventFired');
 await send('Page.reload', { ignoreCache: false });
 await loaded;
 await sleep(1400);
-// a sessão pode reabrir no último documento: vai para documentos e volta, para
-// medir a transição (a cascata só roda na troca de tela)
+
+// cascata do painel (só roda na troca de tela)
 await evaluate(`location.hash = '#/documentos'`);
 await sleep(800);
 await evaluate(`location.hash = '#/'`);
@@ -89,18 +89,33 @@ await sleep(700);
 const mast = await evaluate(`document.querySelector('[data-mast-title]')?.textContent`);
 check('cabeçalho mostra "COLEÇÃO - PROCESSO"', / - /g.test(mast || ''), mast);
 
+// revisor: só “Aguardando revisão” (não vê Atenção) + Aprovados
 const dash = await evaluate(`({
   hero: document.querySelector('.hero__title')?.textContent,
-  strip: document.querySelector('.review-strip')?.textContent?.replace(/\\s+/g, ' ').trim(),
   chip: document.querySelector('[data-profile-name]')?.textContent,
-  approveButtons: document.querySelectorAll('[data-action="review-approve"]').length
+  pills: [...document.querySelectorAll('.review-pill')].map((pill) => ({
+    label: pill.querySelector('.review-pill__label')?.textContent?.trim(),
+    count: pill.querySelector('.review-pill__count')?.textContent?.trim(),
+    icon: Boolean(pill.querySelector('.review-pill__icon svg')),
+    go: Boolean(pill.querySelector('.review-pill__go svg')),
+    filter: pill.dataset.filter
+  })),
+  highlighted: Boolean(document.querySelector('.review-strip__label'))
 })`);
 console.log('painel (revisor):', JSON.stringify(dash));
+const pillLabels = dash.pills.map((pill) => pill.label);
 check('painel do revisor aponta a fila de revisão', /revis/i.test(dash.hero || ''), dash.hero);
-check('painel mostra a faixa de revisão', Boolean(dash.strip) && /Aguardando revisão/.test(dash.strip), dash.strip);
+check('“Revisão” destacado na faixa', dash.highlighted);
+check('revisor vê “Aguardando revisão”', pillLabels.includes('Aguardando revisão'), pillLabels.join(', '));
+check('revisor NÃO vê “Atenção”', !pillLabels.includes('Atenção'), pillLabels.join(', '));
+check('atalho “Aprovados” presente e clicável', pillLabels.includes('Aprovados'), pillLabels.join(', '));
+check(
+  'atalhos têm ícone, contador e seta',
+  dash.pills.every((pill) => pill.icon && pill.count !== undefined && pill.go),
+  JSON.stringify(dash.pills)
+);
 await shot('qa-revisor-painel');
 
-// cascata do painel: classes de animação aplicadas na troca de tela
 await evaluate(`document.querySelector('[data-action="review-queue"]').click()`);
 await sleep(1000);
 const queue = await evaluate(`({
@@ -109,14 +124,15 @@ const queue = await evaluate(`({
   queueCount: document.querySelectorAll('.queue__item').length,
   approve: document.querySelectorAll('[data-action="review-approve"]').length,
   title: document.querySelector('.doc-head__title')?.textContent,
-  summary: document.querySelector('[data-doc-summary]')?.textContent
+  listHasPresence: Boolean(document.querySelector('[data-presence]'))
 })`);
 console.log('fila de revisão:', JSON.stringify(queue));
 check('fila de revisão ativa e listada', queue.reviewPressed === 'true' && queue.queueCount > 0, JSON.stringify(queue));
 check('revisor vê o botão aprovar', queue.approve > 0);
+check('“Analisar” não mostra presença', queue.listHasPresence === false);
 await shot('qa-revisor-fila');
 
-// abre um documento aguardando revisão (não um em atenção)
+// abre um documento aguardando revisão
 const awaitingDoc = await evaluate(`(async () => {
   const pid = localStorage.getItem('scad:activeProcess');
   const res = await fetch('/api/state', { headers: { 'X-SCAD-Process': pid } });
@@ -135,15 +151,18 @@ await evaluate(`document.querySelector('#review-approve-message').value = 'Revis
 await evaluate(`document.querySelector('.sheet [data-confirm]').click()`);
 await sleep(1200);
 const afterApprove = await evaluate(`({
-  toast: [...document.querySelectorAll('.toast')].map((t) => t.textContent).join(' | '),
   summary: document.querySelector('[data-doc-summary]')?.textContent,
   banner: document.querySelector('.done, .done-card')?.textContent?.replace(/\\s+/g, ' ').trim().slice(0, 80)
 })`);
 console.log('depois de aprovar:', JSON.stringify(afterApprove));
-check('aprovação mostra confirmação', /aprovado/i.test(afterApprove.banner || '') || /Aprovado/i.test(afterApprove.summary || ''), JSON.stringify(afterApprove));
+check(
+  'aprovação mostra confirmação',
+  /aprovado/i.test(afterApprove.banner || '') || /Aprovado/i.test(afterApprove.summary || ''),
+  JSON.stringify(afterApprove)
+);
 await shot('qa-revisor-aprovado');
 
-// abre outro documento em revisão e sinaliza um critério
+// abre um documento em revisão e sinaliza um critério
 await evaluate(`(() => {
   const items = [...document.querySelectorAll('.queue__item')];
   const next = items.find((item) => !item.classList.contains('is-current')) || items[0];
@@ -169,15 +188,20 @@ await sleep(1300);
 const afterFlag = await evaluate(`({
   flagText: document.querySelector('.check__flag')?.textContent?.replace(/\\s+/g, ' ').trim(),
   summary: document.querySelector('[data-doc-summary]')?.textContent,
-  banner: document.querySelector('.done, .done-card')?.textContent?.replace(/\\s+/g, ' ').trim().slice(0, 90),
-  toast: [...document.querySelectorAll('.toast')].map((t) => t.textContent).join(' | ')
+  banner: document.querySelector('.done, .done-card')?.textContent?.replace(/\\s+/g, ' ').trim().slice(0, 90)
 })`);
 console.log('depois de sinalizar:', JSON.stringify(afterFlag));
 check('critério sinalizado mostra a mensagem', /evid[êe]ncia/i.test(afterFlag.flagText || ''), afterFlag.flagText);
-check('documento fica em atenção', /aten[çc][ãa]o/i.test(afterFlag.summary || '') || /sinaliza/i.test(afterFlag.banner || ''), JSON.stringify(afterFlag));
+check(
+  'documento fica em atenção',
+  /aten[çc][ãa]o/i.test(afterFlag.summary || '') || /sinaliza/i.test(afterFlag.banner || ''),
+  JSON.stringify(afterFlag)
+);
 const approveOnAttention = await evaluate(`document.querySelectorAll('[data-action="review-approve"]').length`);
 check('documento em atenção não oferece aprovar', approveOnAttention === 0, `botões: ${approveOnAttention}`);
 await shot('qa-revisor-sinalizado');
+
+const flaggedDocId = await evaluate(`location.hash.split('/').pop()`);
 
 // troca para Sergio: sem ações de revisor, mas vê a sinalização
 await evaluate(`document.querySelector('[data-action="switch-profile"]').click()`);
@@ -190,45 +214,84 @@ const asSergio = await evaluate(`({
   flag: document.querySelectorAll('[data-action="review-flag"]').length,
   flagText: document.querySelector('.check__flag')?.textContent?.replace(/\\s+/g, ' ').trim(),
   summary: document.querySelector('[data-doc-summary]')?.textContent,
-  presence: document.querySelector('[data-presence]')?.textContent?.trim()
+  presenceInWorkbench: Boolean(document.querySelector('[data-presence]'))
 })`);
 console.log('como Sergio:', JSON.stringify(asSergio));
 check('Sergio não vê ações de revisor', asSergio.approve === 0 && asSergio.flag === 0, JSON.stringify(asSergio));
 check('Sergio vê a mensagem da sinalização', /evid[êe]ncia/i.test(asSergio.flagText || ''), asSergio.flagText);
+check('presença saiu da aba Analisar', asSergio.presenceInWorkbench === false);
 
-// presença: Diogenes entra no mesmo documento pela API e o Sergio deve ver
-const docId = await evaluate(`document.querySelector('[data-presence]')?.getAttribute('data-presence')`);
+// presença: Diogenes entra no documento sinalizado e o Sergio vê na matriz do painel
 const pid = await evaluate(`localStorage.getItem('scad:activeProcess')`);
 const presenceRes = await fetch(`${BASE}/api/presence`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', 'X-SCAD-Actor': 'usr_diogenes', 'X-SCAD-Process': pid },
-  body: JSON.stringify({ docId }),
+  body: JSON.stringify({ docId: flaggedDocId }),
 });
-const presenceJson = await presenceRes.json();
-console.log('presença via API:', JSON.stringify(presenceJson));
-check(
-  'presença de Diogenes registrada (Sergio aparece para ele)',
-  presenceJson.present?.some((item) => item.actorName === 'Sergio' && item.docId === docId)
-);
-await sleep(13500);
-const seen = await evaluate(`document.querySelector('[data-presence]')?.textContent?.replace(/\\s+/g, ' ').trim()`);
-console.log('presença na tela:', seen);
-check('Sergio vê "Diogenes está aqui"', /Diogenes est[áa] aqui/i.test(seen || ''), seen);
-await shot('qa-presenca-diogenes');
+console.log('presença via API (Diogenes no documento):', JSON.stringify(await presenceRes.json()));
+await evaluate(`location.hash = '#/'`);
+await sleep(2500);
+const matrixPresence = await evaluate(`(() => {
+  const nodes = [...document.querySelectorAll('.matrix__presence')];
+  return {
+    total: nodes.length,
+    visible: nodes.filter((node) => node.textContent.trim()).length,
+    text: nodes.map((node) => node.textContent.replace(/\\s+/g, ' ').trim()).filter(Boolean),
+    target: document.querySelector('.matrix__presence[data-presence="${flaggedDocId}"]')?.textContent?.replace(/\\s+/g, ' ').trim()
+  };
+})()`);
+console.log('presença na matriz:', JSON.stringify(matrixPresence));
+check('Sergio vê "Diogenes está aqui" na matriz', /Diogenes est[áa] aqui/i.test(matrixPresence.target || ''), matrixPresence.target);
+check('só a linha ocupada mostra presença', matrixPresence.visible === 1, JSON.stringify(matrixPresence));
+await shot('qa-presenca-matriz');
 
-// filtro de revisão na lista de documentos
-await evaluate(`location.hash = '#/documentos'`);
-await sleep(800);
-await evaluate(`document.querySelector('[data-action="filter-docs"][data-filter="review"]').click()`);
-await sleep(500);
-const listFilter = await evaluate(`({
-  pressed: document.querySelector('[data-action="filter-docs"][data-filter="review"]')?.getAttribute('aria-pressed'),
-  rows: document.querySelectorAll('.docrow').length,
-  results: document.querySelector('#doc-results')?.textContent
+// coluna Situação: contagem + ícone, sem texto longo
+const statusCells = await evaluate(`(() => {
+  const cells = [...document.querySelectorAll('.matrix__status')];
+  return {
+    total: cells.length,
+    withCount: cells.filter((cell) => /^\\d+\\/\\d+$/.test(cell.querySelector('.matrix__status-count')?.textContent?.trim() || '')).length,
+    withIcon: cells.filter((cell) => Boolean(cell.querySelector('.matrix__smark svg'))).length,
+    longText: cells.filter((cell) => (cell.textContent || '').trim().length > 12).length,
+    legend: Boolean(document.querySelector('.matrix__legend--review'))
+  };
+})()`);
+console.log('coluna situação:', JSON.stringify(statusCells));
+check('situação mostra contagem em todas as linhas', statusCells.withCount === statusCells.total, JSON.stringify(statusCells));
+check('situação usa ícones para os novos estados', statusCells.withIcon > 0, JSON.stringify(statusCells));
+check('situação sem texto longo quebrando linha', statusCells.longText === 0, JSON.stringify(statusCells));
+check('legenda explica os ícones de situação', statusCells.legend);
+
+// Sergio: faixa mostra Atenção (não Aguardando revisão) + Aprovados
+const sergioDash = await evaluate(`({
+  hero: document.querySelector('.hero__title')?.textContent,
+  pills: [...document.querySelectorAll('.review-pill')].map((pill) => ({
+    label: pill.querySelector('.review-pill__label')?.textContent?.trim(),
+    filter: pill.dataset.filter
+  }))
 })`);
-console.log('filtro de revisão:', JSON.stringify(listFilter));
-check('filtro Revisão funciona', listFilter.pressed === 'true', JSON.stringify(listFilter));
-await shot('qa-documentos-revisao');
+console.log('painel (analista):', JSON.stringify(sergioDash));
+const sergioPills = sergioDash.pills.map((pill) => pill.label);
+check('analista vê “Atenção”', sergioPills.includes('Atenção'), sergioPills.join(', '));
+check('analista NÃO vê “Aguardando revisão”', !sergioPills.includes('Aguardando revisão'), sergioPills.join(', '));
+check('faixa do analista explica a correção', /sinaliza|corrigir/i.test(sergioDash.hero || ''), sergioDash.hero);
+await shot('qa-analista-painel');
+
+// atalho “Aprovados” filtra só aprovados
+await evaluate(`document.querySelector('.review-pill--ok').click()`);
+await sleep(900);
+const approvedFilter = await evaluate(`({
+  hash: location.hash,
+  pressed: document.querySelector('[data-action="filter-docs"][data-filter="approved"]')?.getAttribute('aria-pressed'),
+  note: document.querySelector('.filter-note')?.textContent?.replace(/\\s+/g, ' ').trim(),
+  rows: document.querySelectorAll('.docrow').length,
+  badges: [...document.querySelectorAll('.docrow__stamp')].map((node) => node.textContent.trim())
+})`);
+console.log('filtro aprovados:', JSON.stringify(approvedFilter));
+check('atalho Aprovados abre a lista filtrada', approvedFilter.pressed === 'true', JSON.stringify(approvedFilter));
+check('aviso “Mostrando: Aprovados”', /Aprovados/.test(approvedFilter.note || ''), approvedFilter.note);
+check('lista só com aprovados', approvedFilter.rows > 0 && approvedFilter.badges.every((badge) => /Aprovado/i.test(badge)), JSON.stringify(approvedFilter.badges));
+await shot('qa-documentos-aprovados');
 
 console.log(failures ? `\n${failures} FALHA(S)` : '\nrevisão na interface: ok');
 ws.close();

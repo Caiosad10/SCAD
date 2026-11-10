@@ -37,13 +37,16 @@ Um caderno de trabalho local para **organizar coleções e processos, importar d
 - **Diogenes revisa**: no documento concluído ele usa **Aprovar documento** (mensagem opcional) ou **Sinalizar critério** (mensagem obrigatória). Ao sinalizar, os demais critérios avaliados são aprovados automaticamente e o documento fica em **Atenção**.
 - Documento com sinalização aberta **não pode ser aprovado**; o Sergio corrige o resultado ou a nota e o critério volta para **Aguardando revisão**.
 - Verificação feita pelo próprio revisor já nasce **aprovada**. Documentos concluídos antes da revisão entram como “Aguardando revisão” na migração.
-- O revisor tem **fila “Revisão”** na bancada, faixa de revisão no painel e filtro “Revisão” na lista de documentos; cada critério mostra `aprovada`, `sinalizada` e a mensagem de quem sinalizou.
+- O revisor tem **fila “Revisão”** na bancada, a **faixa de revisão** no painel e filtros na lista de documentos; cada critério mostra `aprovada`, `sinalizada` e a mensagem de quem sinalizou.
+- **Faixa de revisão com papel definido**: “Revisão” aparece grifado e cada contador é um atalho clicável com ícone, número e seta — 👓 **Aguardando revisão** (só o revisor vê), ⚠ **Atenção** (só o analista vê, para corrigir) e ✓ **Aprovados** (abre a lista só com os aprovados).
+- **Coluna “Situação” da matriz**: continua mostrando `verificadas/total` e os novos estados aparecem como ícone — 👓 aguardando revisão, ⚠ atenção, ✓ aprovado — com legenda própria. Nada de texto longo quebrando a linha.
 - Tudo fica no histórico por verificação (autor, mensagem, data) e sai no CSV com as colunas de revisão.
 
 ### Presença
 
-- Enquanto você está num documento, a outra pessoa vê **“Sergio está aqui”** / **“Diogenes está aqui”** embaixo do nome do arquivo — um aviso discreto para não editarem o mesmo documento ao mesmo tempo.
-- Funciona por batimento de 12 s (expira em 45 s ao sair) e não grava nada no banco.
+- No **painel**, dentro da matriz de verificação, embaixo do nome do arquivo: **“Sergio está aqui”** / **“Diogenes está aqui”**, em letra pequena, só na linha do documento ocupado.
+- A linha cresce ~5 px enquanto alguém está no documento e **volta ao tamanho normal** quando a pessoa sai (o alerta some sozinho).
+- Funciona por batimento de 12 s (expira em 45 s ao sair) e não grava nada no banco — a presença não aparece na aba “Analisar”.
 - **Matriz de verificação** com colunas uniformes, nomes de critério em duas linhas, ícones maiores e fundo tingido por estado. O wrapper que faltava para aplicar o CSS da tabela foi corrigido.
 - **Cards de métrica clicáveis**: Documentos, Não conformes (abre apontamentos já filtrados) e Observações (idem). “Verificações” é apenas indicador.
 - **Fluxo de verificação contínuo**: ao marcar Não conforme/Observação a nota recebe o foco (sem recarregar a linha), e cada critério tem um atalho “Próximo critério” que rola e foca o seguinte sem sair do documento.

@@ -19,7 +19,7 @@ import {
   currentProfile,
   ui,
 } from '../store.js';
-import { renderChecks, docSummaryHtml, presenceLine } from './checks.js';
+import { renderChecks, docSummaryHtml } from './checks.js';
 
 function lastUpdate(state, docId) {
   const checks = state.checks.filter((c) => c.docId === docId);
@@ -154,7 +154,6 @@ export function renderWorkbench(state) {
     `<div class="doc-head__copy">` +
     `<p class="eyebrow">Bancada · documento ${index + 1} de ${state.documents.length} · ${fileKindLabel(kind)}</p>` +
     `<h2 class="doc-head__title">${esc(doc.name)}</h2>` +
-    `<p class="doc-presence" data-presence="${doc.id}">${presenceLine(doc.id)}</p>` +
     `<p class="page__sub" data-doc-summary>${docSummaryHtml(state, doc)}` +
     (updated ? `<span aria-hidden="true">·</span>última edição ${esc(relTime(updated))}` : '') +
     `</p></div>` +

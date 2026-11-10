@@ -4309,22 +4309,6 @@ body.nav-hidden .content {
 
 /* -------------------------------------------------- revisão e presença */
 
-.doc-presence {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--blue);
-}
-
-.doc-presence:empty {
-  display: none;
-}
-
 .presence-dot {
   width: 6px;
   height: 6px;
@@ -4427,59 +4411,237 @@ body.nav-hidden .content {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   margin-top: -4px;
-  padding: 10px 16px;
+  padding: 10px 14px;
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
   background: var(--card);
+}
+
+/* “Revisão” grifado, como um marca-texto sobre o rótulo */
+.review-strip__label {
+  flex: none;
+  padding: 2px 7px 3px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  background: linear-gradient(180deg, transparent 46%, rgba(198, 158, 46, 0.42) 46%);
+  border-radius: 2px;
+}
+
+.review-strip__links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Atalhos com cara de botão: ícone + rótulo + contador + seta */
+.review-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 10px 0 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--card-soft);
+  color: var(--ink-2);
+  text-decoration: none;
   font-size: 12.5px;
+  line-height: 1;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+
+.review-pill:hover {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  color: var(--blue-strong);
+}
+
+.review-pill:active {
+  transform: translateY(1px);
+}
+
+.review-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.review-pill__icon {
+  display: inline-flex;
   color: var(--muted);
 }
 
-.review-strip__label {
+.review-pill__label {
+  white-space: nowrap;
+}
+
+.review-pill__count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: rgba(19, 28, 35, 0.07);
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.review-pill__go {
+  display: inline-flex;
+  color: var(--muted-soft);
+}
+
+.review-pill--rev {
+  border-color: rgba(125, 90, 22, 0.34);
+}
+
+.review-pill--rev .review-pill__icon {
+  color: var(--obs);
+}
+
+.review-pill--nc {
+  border-color: rgba(163, 63, 44, 0.34);
+}
+
+.review-pill--nc .review-pill__icon {
+  color: var(--nc);
+}
+
+.review-pill--ok {
+  border-color: rgba(42, 106, 77, 0.3);
+}
+
+.review-pill--ok .review-pill__icon {
+  color: var(--ok);
+}
+
+.review-pill--nc:hover {
+  border-color: var(--nc);
+  background: var(--seal-soft);
+  color: var(--nc);
+}
+
+.review-pill--ok:hover {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+/* Coluna “Situação”: contagem de verificações + ícone do estado novo */
+.matrix__status {
+  white-space: nowrap;
+}
+
+.matrix__status-count {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.matrix__smark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 3px;
+}
+
+.matrix__smark--rev {
+  color: var(--obs);
+}
+
+.matrix__smark--nc {
+  color: var(--nc);
+}
+
+.matrix__smark--ok {
+  color: var(--ok);
+}
+
+.matrix__legend--review {
+  align-items: center;
+  padding-top: 7px;
+  border-top: 1px dashed var(--line-soft);
+}
+
+.matrix__legend-title {
+  font-family: var(--font-mono);
+  font-size: 9px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted-soft);
 }
 
-.review-strip__link {
+.matrix__legend--review .matrix__smark {
+  margin-top: 0;
+  margin-right: 2px;
+}
+
+/* Presença na matriz: linha discreta sob o nome, some quando ninguém está */
+.matrix__presence {
+  margin-top: 2px;
+  padding-left: 32px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--blue);
-  text-decoration: none;
+  line-height: 1.35;
 }
 
-.review-strip__link:hover {
-  text-decoration: underline;
+.matrix__presence:empty {
+  display: none;
 }
 
-.review-strip__link b,
-.review-strip__ok b {
-  font-variant-numeric: tabular-nums;
+.matrix__presence .presence-dot {
+  width: 5px;
+  height: 5px;
+  margin-right: 5px;
+  box-shadow: none;
+  vertical-align: middle;
 }
 
-.review-strip__sep {
-  margin: 0 6px;
-  color: var(--line-strong);
+.filter-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 7px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+  background: var(--card-soft);
+  font-size: 12px;
+  color: var(--muted);
 }
 
-.review-strip__ok {
+.filter-note b {
+  color: var(--ink-2);
+}
+
+.filter-note__clear {
   margin-left: auto;
-  color: var(--ok);
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--blue);
+  text-decoration: underline;
+  cursor: pointer;
 }
 
-.matrix__status-text--approved {
-  color: var(--ok);
-}
-
-.matrix__status-text--attention {
-  color: var(--nc);
-  font-weight: 600;
-}
-
-.matrix__status-text--awaiting {
-  color: var(--obs);
+/* Filtros com mais itens precisam quebrar linha em vez de estourar a largura */
+@media (max-width: 1040px) {
+  .segmented {
+    flex-wrap: wrap;
+    border-radius: var(--r-md);
+  }
 }
 
 @keyframes content-rise {
@@ -4494,10 +4656,6 @@ body.nav-hidden .content {
 }
 
 @media (max-width: 760px) {
-  .doc-presence {
-    font-size: 9.5px;
-  }
-
   .check__review,
   .check__flag,
   .check__flag-hint,
@@ -4506,11 +4664,23 @@ body.nav-hidden .content {
   }
 
   .review-strip {
+    gap: 8px;
+    padding: 9px 11px;
+  }
+
+  .review-strip__links {
+    gap: 6px;
+  }
+
+  .review-pill {
+    min-height: 32px;
+    gap: 6px;
+    padding: 0 9px 0 8px;
     font-size: 12px;
   }
 
-  .review-strip__ok {
-    margin-left: 0;
+  .review-pill__label {
+    white-space: normal;
   }
 }
 
@@ -4528,7 +4698,6 @@ body.nav-hidden .content {
   .checks__foot,
   .finding__actions,
   .section-head__action,
-  .doc-presence,
   .review-strip,
   .skip {
     display: none !important;

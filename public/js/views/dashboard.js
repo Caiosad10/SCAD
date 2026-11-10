@@ -20,9 +20,38 @@ import {
   reviewOfDoc,
   currentProfile,
 } from '../store.js';
+import { presenceLine } from './checks.js';
 
 function countLabel(n, one, many) {
   return `${fmtInt(n)} ${n === 1 ? one : many}`;
+}
+
+/** Atalho clicável da faixa de revisão: ícone, texto, contador e seta. */
+function reviewPill({ tone, iconName, label, hint, count, filter }) {
+  return (
+    `<a class="review-pill review-pill--${tone}" href="#/documentos" data-action="review-filter" ` +
+    `data-filter="${filter}" title="${esc(hint)}" ` +
+    `aria-label="${esc(label)}: ${fmtInt(count)} — abrir somente estes documentos">` +
+    `<span class="review-pill__icon">${icon(iconName, 15)}</span>` +
+    `<span class="review-pill__label">${esc(label)}</span>` +
+    `<b class="review-pill__count">${fmtInt(count)}</b>` +
+    `<span class="review-pill__go" aria-hidden="true">${icon('chevronRight', 12)}</span></a>`
+  );
+}
+
+/** Ícone do estado de revisão na coluna “Situação” (só os estados novos). */
+function reviewMark(review, inactive) {
+  if (inactive) return '';
+  if (review.status === 'approved') {
+    return `<span class="matrix__smark matrix__smark--ok" title="Aprovado na revisão">${icon('check', 15)}</span>`;
+  }
+  if (review.status === 'attention') {
+    return `<span class="matrix__smark matrix__smark--nc" title="Atenção: sinalização para o analista corrigir">${icon('alert', 15)}</span>`;
+  }
+  if (review.status === 'awaiting') {
+    return `<span class="matrix__smark matrix__smark--rev" title="Aguardando revisão">${icon('glasses', 15)}</span>`;
+  }
+  return '';
 }
 
 function metric({ label, value, unit = '', sub = '', mark = '', tone = '', href = '', action = '', filter = '' }) {
@@ -59,21 +88,24 @@ export function renderDashboard(state) {
   let actions;
   const reviewer = currentProfile(state)?.role === 'reviewer';
 
-  if (reviewer && (s.reviewAwaiting || s.reviewAttention)) {
+  // Revisor vê o que precisa revisar; analista vê o que precisa corrigir.
+  if (reviewer && s.reviewAwaiting) {
     title = 'Há documentos esperando sua revisão.';
-    const parts = [];
-    if (s.reviewAwaiting) {
-      parts.push(countLabel(s.reviewAwaiting, 'documento aguardando revisão', 'documentos aguardando revisão'));
-    }
-    if (s.reviewAttention) {
-      parts.push(countLabel(s.reviewAttention, 'documento com sinalização', 'documentos com sinalização'));
-    }
+    const parts = [countLabel(s.reviewAwaiting, 'documento aguardando revisão', 'documentos aguardando revisão')];
     if (s.reviewApproved) {
       parts.push(countLabel(s.reviewApproved, 'já aprovado', 'já aprovados'));
     }
     lead = `${parts.join(' · ')}.`;
     actions =
-      `<button type="button" class="btn btn--primary" data-action="review-queue">${icon('check', 16)} Revisar fila</button>` +
+      `<button type="button" class="btn btn--primary" data-action="review-queue">${icon('glasses', 16)} Revisar fila</button>` +
+      `<a class="btn btn--ghost" href="#/documentos">Ver documentos</a>`;
+  } else if (!reviewer && s.reviewAttention) {
+    title = 'Há documentos com sinalização para você corrigir.';
+    lead =
+      `${countLabel(s.reviewAttention, 'documento em atenção', 'documentos em atenção')} — ` +
+      `abra o critério sinalizado, ajuste o resultado ou a nota e devolva à revisão.`;
+    actions =
+      `<button type="button" class="btn btn--primary" data-action="review-queue">${icon('alert', 16)} Ver sinalizações</button>` +
       `<a class="btn btn--ghost" href="#/documentos">Ver documentos</a>`;
   } else if (!docs.length) {
     title = 'O arquivo está aberto, mas ainda sem documentos.';
@@ -186,18 +218,51 @@ export function renderDashboard(state) {
     }) +
     `</div>`;
 
-  const reviewStrip =
-    s.reviewAwaiting || s.reviewAttention || s.reviewApproved
-      ? `<div class="review-strip">` +
-        `<span class="review-strip__label">Revisão</span>` +
-        `<a class="review-strip__link" href="#/documentos" data-action="review-filter" data-filter="awaiting">` +
-        `Aguardando revisão <b>${fmtInt(s.reviewAwaiting)}</b></a>` +
-        `<span class="review-strip__sep" aria-hidden="true">·</span>` +
-        `<a class="review-strip__link" href="#/documentos" data-action="review-filter" data-filter="attention">` +
-        `Atenção <b>${fmtInt(s.reviewAttention)}</b></a>` +
-        `<span class="review-strip__ok">Aprovados <b>${fmtInt(s.reviewApproved)}</b></span>` +
-        `</div>`
-      : '';
+  const stripPills = [];
+  if (reviewer) {
+    if (s.reviewAwaiting) {
+      stripPills.push(
+        reviewPill({
+          tone: 'rev',
+          iconName: 'glasses',
+          label: 'Aguardando revisão',
+          hint: 'Documentos com todas as verificações prontas esperando a sua revisão',
+          count: s.reviewAwaiting,
+          filter: 'awaiting',
+        })
+      );
+    }
+  } else if (s.reviewAttention) {
+    stripPills.push(
+      reviewPill({
+        tone: 'nc',
+        iconName: 'alert',
+        label: 'Atenção',
+        hint: 'Documentos com critério sinalizado pelo revisor para você corrigir',
+        count: s.reviewAttention,
+        filter: 'attention',
+      })
+    );
+  }
+  if (s.reviewApproved) {
+    stripPills.push(
+      reviewPill({
+        tone: 'ok',
+        iconName: 'check',
+        label: 'Aprovados',
+        hint: 'Documentos com revisão concluída',
+        count: s.reviewApproved,
+        filter: 'approved',
+      })
+    );
+  }
+
+  const reviewStrip = stripPills.length
+    ? `<div class="review-strip">` +
+      `<span class="review-strip__label">Revisão</span>` +
+      `<div class="review-strip__links">${stripPills.join('')}</div>` +
+      `</div>`
+    : '';
 
   let matrixBody;
   if (!docs.length) {
@@ -222,22 +287,22 @@ export function renderDashboard(state) {
     const cols =
       `<colgroup><col style="width:26%">` +
       crit.map(() => '<col>').join('') +
-      `<col style="width:64px"></colgroup>`;
+      `<col style="width:84px"></colgroup>`;
 
     const rows = docs
       .map((doc, index) => {
         const st = docStats(state, doc.id);
         const inactive = doc.active === false;
         const review = reviewOfDoc(state, doc.id);
-        const statusText = inactive
+        const statusLabel = inactive
           ? 'Inativo'
           : review.status === 'approved'
             ? 'Aprovado'
             : review.status === 'attention'
               ? 'Atenção'
               : review.status === 'awaiting'
-                ? 'Revisão'
-                : `${st.done}/${st.total}`;
+                ? 'Aguardando revisão'
+                : `${st.done} de ${st.total} verificações`;
         const cells = inactive
           ? crit
               .map(
@@ -263,19 +328,21 @@ export function renderDashboard(state) {
               .join('');
         return (
           `<tr class="${inactive ? 'matrix__row--inactive' : ''}">` +
-          `<td><a class="matrix__doc" href="#/analisar/${doc.id}">` +
+          `<td class="matrix__doccell"><a class="matrix__doc" href="#/analisar/${doc.id}">` +
           `<span class="matrix__num">${String(index + 1).padStart(2, '0')}</span>` +
-          `<span class="matrix__name">${esc(doc.name)}</span></a></td>` +
+          `<span class="matrix__name">${esc(doc.name)}</span></a>` +
+          `<p class="matrix__presence" data-presence="${doc.id}">${presenceLine(doc.id)}</p></td>` +
           cells +
-          `<td class="matrix__status"><span class="matrix__status-text matrix__status-text--${esc(
-            review.status
-          )}">${esc(statusText)}</span></td>` +
+          `<td class="matrix__status" aria-label="Situação: ${esc(statusLabel)}">` +
+          `<span class="matrix__status-count">${inactive ? '—' : `${st.done}/${st.total}`}</span>` +
+          reviewMark(review, inactive) +
+          `</td>` +
           `</tr>`
         );
       })
       .join('');
 
-    const minWidth = 210 + crit.length * 86 + 58;
+    const minWidth = 230 + crit.length * 86 + 78;
     matrixBody =
       `<div class="matrix__scroll matrix"><table style="min-width:${minWidth}px">${cols}${head}<tbody>${rows}</tbody></table></div>` +
       `<div class="matrix__legend">` +
@@ -284,6 +351,12 @@ export function renderDashboard(state) {
       `<span>${statusMark('nc', 15)} não conforme</span>` +
       `<span>${statusMark('obs', 15)} observação</span>` +
       `<span class="matrix__legend-inactive">— inativo</span>` +
+      `</div>` +
+      `<div class="matrix__legend matrix__legend--review">` +
+      `<span class="matrix__legend-title">Situação</span>` +
+      `<span><span class="matrix__smark matrix__smark--rev">${icon('glasses', 15)}</span> aguardando revisão</span>` +
+      `<span><span class="matrix__smark matrix__smark--nc">${icon('alert', 15)}</span> atenção (corrigir)</span>` +
+      `<span><span class="matrix__smark matrix__smark--ok">${icon('check', 15)}</span> aprovado</span>` +
       `</div>`;
   }
 

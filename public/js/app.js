@@ -106,6 +106,7 @@ let pendingScrollY = 0;
 let scrollSaveTimer = 0;
 let presenceTimer = 0;
 let presenceDocId = null;
+let presenceModeName = null;
 
 /* ---------------------------------------------------------------- boot */
 
@@ -1304,6 +1305,7 @@ function openFlagReview(docId, checkId) {
 
 /* ------------------------------------------------------------- presença */
 
+/** Documento em que estou trabalhando (registra a minha presença). */
 function presenceRouteDoc() {
   const state = getState();
   if (!state?.process) return null;
@@ -1315,12 +1317,24 @@ function presenceRouteDoc() {
   return null;
 }
 
+/**
+ * Três modos: `doc` registra onde estou; `watch` só observa a matriz
+ * (painel); nenhum outro limpa a presença. A matriz é onde o outro se vê.
+ */
+function presenceMode() {
+  if (presenceRouteDoc()) return 'doc';
+  if (ui.route.name === 'dashboard' && getState()?.process) return 'watch';
+  return null;
+}
+
 function syncPresence() {
-  const docId = presenceRouteDoc();
-  if (docId === presenceDocId && presenceTimer) return;
+  const mode = presenceMode();
+  const docId = mode === 'doc' ? presenceRouteDoc() : null;
+  if (mode === presenceModeName && docId === presenceDocId && presenceTimer) return;
   stopPresence();
+  presenceModeName = mode;
   presenceDocId = docId;
-  if (!docId) {
+  if (!mode) {
     if (ui.presence.length) {
       ui.presence = [];
       refreshPresence();
@@ -1337,10 +1351,10 @@ function stopPresence() {
 }
 
 async function heartbeatPresence() {
-  const docId = presenceRouteDoc();
-  if (!docId || document.hidden) return;
+  const mode = presenceMode();
+  if (!mode || document.hidden) return;
   try {
-    const res = await api.presence(docId);
+    const res = await api.presence(mode === 'doc' ? presenceRouteDoc() : null);
     const next = Array.isArray(res?.present) ? res.present : [];
     if (JSON.stringify(next) === JSON.stringify(ui.presence)) return;
     ui.presence = next;

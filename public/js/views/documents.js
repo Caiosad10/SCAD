@@ -22,7 +22,7 @@ import {
   reviewOfDoc,
   currentProfile,
 } from '../store.js';
-import { renderChecks, docTagHtml, presenceLine } from './checks.js';
+import { renderChecks, docTagHtml } from './checks.js';
 
 const FILTERS = [
   { id: 'all', label: 'Todos' },
@@ -30,6 +30,7 @@ const FILTERS = [
   { id: 'done', label: 'Concluídos' },
   { id: 'flagged', label: 'Com apontamento' },
   { id: 'review', label: 'Revisão' },
+  { id: 'approved', label: 'Aprovados' },
   { id: 'inactive', label: 'Inativos' },
 ];
 
@@ -63,12 +64,13 @@ export function filterDocuments(state) {
       }
       if (ui.docFilter === 'awaiting') return reviewOfDoc(state, doc.id).status === 'awaiting';
       if (ui.docFilter === 'attention') return reviewOfDoc(state, doc.id).status === 'attention';
+      if (ui.docFilter === 'approved') return reviewOfDoc(state, doc.id).status === 'approved';
       return true;
     });
 }
 
 function filterCounts(state) {
-  const counts = { all: state.documents.length, pending: 0, done: 0, flagged: 0, review: 0, inactive: 0 };
+  const counts = { all: state.documents.length, pending: 0, done: 0, flagged: 0, review: 0, approved: 0, inactive: 0 };
   for (const doc of state.documents) {
     if (doc.active === false) {
       counts.inactive += 1;
@@ -80,6 +82,7 @@ function filterCounts(state) {
     if (st.nc || st.obs) counts.flagged += 1;
     const review = reviewOfDoc(state, doc.id).status;
     if (review === 'awaiting' || review === 'attention') counts.review += 1;
+    if (review === 'approved') counts.approved += 1;
   }
   return counts;
 }
@@ -162,6 +165,14 @@ export function renderDocuments(state) {
   // A faixa de revisão do painel abre já filtrado por “aguardando” ou “atenção”;
   // na barra de filtros ambos aparecem como o filtro “Revisão”.
   const activeFilter = ui.docFilter === 'awaiting' || ui.docFilter === 'attention' ? 'review' : ui.docFilter;
+  const subFilter =
+    ui.docFilter === 'awaiting'
+      ? 'Aguardando revisão'
+      : ui.docFilter === 'attention'
+        ? 'Atenção'
+        : ui.docFilter === 'approved'
+          ? 'Aprovados'
+          : null;
 
   const tabs = FILTERS.map(
     (filter) =>
@@ -169,6 +180,11 @@ export function renderDocuments(state) {
       `aria-pressed="${activeFilter === filter.id}">${esc(filter.label)}` +
       `<span class="segmented__count">${counts[filter.id]}</span></button>`
   ).join('');
+
+  const filterNote = subFilter
+    ? `<div class="filter-note"><span>Mostrando: <b>${esc(subFilter)}</b></span>` +
+      `<button type="button" class="filter-note__clear" data-action="filter-docs" data-filter="all">ver todos</button></div>`
+    : '';
 
   return (
     `<div class="page page--documents">` +
@@ -190,6 +206,7 @@ export function renderDocuments(state) {
         `<span class="toolbar__count" id="doc-results">${filterDocuments(state).length} de ${state.documents.length}</span>` +
         `</div>`
       : '') +
+    filterNote +
     `<div id="doclist">${renderDocumentsList(state)}</div>` +
     `</div>`
   );
@@ -224,7 +241,6 @@ export function renderDocument(state, docId) {
     `<div class="doc-head__copy">` +
     `<p class="eyebrow">Documento ${index + 1} de ${state.documents.length} · ${fileKindLabel(kind)}</p>` +
     `<h2 class="doc-head__title">${esc(doc.name)}</h2>` +
-    `<p class="doc-presence" data-presence="${doc.id}">${presenceLine(doc.id)}</p>` +
     `<p class="page__sub">${fmtBytes(doc.size)} <span aria-hidden="true">·</span> importado em ${esc(
       fmtDate(doc.addedAt)
     )} <span aria-hidden="true">·</span> <span data-doc-summary>${

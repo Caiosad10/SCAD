@@ -90,8 +90,10 @@ Coleção (ISO 9001:2015)
 - **Migração dos dados atuais:** documentos com todos os checks concluídos passam a **Aguardando revisão** (checks existentes ficam com revisão pendente, sem reescrever dados).
 - **Histórico:** cada check guarda `review.history` (status, autor, mensagem, data, última versão); aparece no CSV/backup.
 - **Concorrência:** sinalização vinculada à versão do check (`updatedAt`); se mudou, o servidor recusa com 409 e pede para recarregar.
-- **UX implementada:** sem nova aba. Selos `Aguardando revisão`, `Atenção` e `Aprovado` no documento, na matriz e na lista; na bancada o revisor tem **Aprovar documento** (diálogo com mensagem opcional) e **Sinalizar critério** em cada verificação avaliada (mensagem obrigatória). O analista vê a mensagem no próprio critério e a devolução para revisão acontece ao editar. Painel do revisor com faixa de revisão e fila “Revisão”; lista de documentos com filtro “Revisão”.
-- **Presença:** cada pessoa vê “Diogenes está aqui” (ou “Sergio está aqui”) embaixo do nome do documento aberto, via batimento de 12 s com validade de 45 s no servidor. Não é gravado no banco. Serve para evitar edição simultânea no mesmo documento.
+- **UX implementada:** sem nova aba. Selos `Aguardando revisão`, `Atenção` e `Aprovado` no documento, na matriz e na lista; na bancada o revisor tem **Aprovar documento** (diálogo com mensagem opcional) e **Sinalizar critério** em cada verificação avaliada (mensagem obrigatória). O analista vê a mensagem no próprio critério e a devolução para revisão acontece ao editar. Painel do revisor com faixa de revisão e fila “Revisão”; lista de documentos com filtros “Revisão” e “Aprovados”.
+- **Faixa de revisão por papel:** o rótulo “Revisão” é grifado; cada contador é um botão com ícone, número e seta. Revisor vê 👓 **Aguardando revisão**; analista vê ⚠ **Atenção** (corrigir); ambos veem ✓ **Aprovados** (filtra só aprovados). Os atalhos abrem a lista já filtrada, com aviso “Mostrando: …” e “ver todos”.
+- **Coluna “Situação” da matriz:** mantém `verificadas/total` visível e usa **ícones** para os estados novos (👓 aguardando revisão, ⚠ atenção, ✓ aprovado) em vez de texto — evita quebra de linha e mantém a coluna estreita. Legenda separada só com os estados de situação.
+- **Presença:** mostrada apenas no **painel, na matriz de verificação**, abaixo do nome do documento (linha que cresce ~5 px e volta ao normal quando a pessoa sai). Fora da aba “Analisar”. Batimento de 12 s, validade de 45 s, sem gravar no banco; serve para evitar edição simultânea no mesmo documento.
 
 ### 4.4 Atividade
 
@@ -109,7 +111,9 @@ Coleção (ISO 9001:2015)
 - Reabertura instantânea com cache de sessão + espelho em `localStorage`; rota, filtros, escopo da fila e rolagem restaurados após recarga (iPad).
 - Cabeçalho do processo: **← Voltar para processos**, sobrancelha com a tela atual e título `${coleção} - ${processo}`.
 - Painel entra em cascata (blocos com 60 ms de atraso, 0,5 s cada) a cada troca de tela — sem reanimar a cada salvamento.
-- Presença: linha discreta “Fulano está aqui” abaixo do nome do documento, em maiúsculas mono azul, com ponto pulsante.
+- Presença: linha discreta “Fulano está aqui” **na matriz de verificação do painel**, abaixo do nome do documento, em maiúsculas mono azul com ponto pulsante; a linha volta à altura normal quando a pessoa sai.
+- Revisão por papel na faixa do painel: revisor vê “Aguardando revisão”, analista vê “Atenção”, ambos veem “Aprovados”; todos são atalhos clicáveis com ícone, contador e seta.
+- Coluna “Situação” da matriz usa ícone para os estados de revisão (👓 ⚠ ✓) e mantém a contagem `verificadas/total`; legenda própria abaixo da matriz.
 - **Nas telas de Coleções e de Processos a barra deve desaparecer** (fora do contexto do processo); ao entrar num processo ela **se expande**: a cápsula cresce de ~52% ao tamanho final em 0,7 s (`cubic-bezier(0.34, 0.9, 0.3, 1)`), ícones em cascata de 60 ms e pílula do item ativo medida em espaço de layout (divide a medida atual pela escala da animação).
 - Matriz: colunas uniformes, cabeçalho de 2 linhas, ícones 22 px com fundo tingido.
 - Cards-métrica: Documentos, Não conformes e Observações são filtros; **Verificações é apenas indicador**.
@@ -274,6 +278,7 @@ Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
 | 2026-11-10 | Fase A v2 implementada em `fase-a`: schema coleções/processos, migração com backup, perfis/autoria, documento Ativo/Inativo, telas de coleções, critérios copiáveis e barra oculta/animada. Deploy pendente de confirmação. |
 | 2026-11-10 | Correções do uso no iPad: navegação interna por `pushState` (sem recarga), sessão persistida (tela/filtros/fila/rolagem), tela de carregamento só após 220 ms com cache espelhado em `localStorage`, barra expandindo em 0,7 s e cabeçalho sem nome repetido. Validado no Edge headless em viewport de iPad (41 documentos, 240 verificações). |
 | 2026-11-10 | Fase B no `fase-a` (v2.0-rc3): revisão por documento com aprovação em bloco e sinalização por critério (mensagem obrigatória), autoaprovação do revisor, devolução automática do check alterado pelo analista, bloqueio de aprovação com sinalização aberta, histórico da revisão, filtros “Revisão”/“Aguardando”/“Atenção”, faixa de revisão no painel, títulos `${coleção} - ${processo}`, cascata do painel e presença “Fulano está aqui”. 24 testes de API e 19 de interface passando. |
+| 2026-11-10 | Ajustes de leitura (v2.0-rc4): faixa “Revisão” grifada com atalhos clicáveis (ícone + contador + seta), separação por papel (revisor = Aguardando revisão; analista = Atenção) e “Aprovados” clicável com filtro próprio; coluna “Situação” da matriz com ícones (👓 ⚠ ✓) mantendo `verificadas/total`; presença movida para a matriz do painel, abaixo do nome do documento, com a linha voltando ao tamanho normal ao sair. 34 verificações de interface e 13 de layout/presença passando. |
 
 ---
 
