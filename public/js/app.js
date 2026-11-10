@@ -366,6 +366,7 @@ function renderAll({ preserveScroll = false } = {}) {
   const y = window.scrollY;
   renderMasthead();
   renderNav();
+  document.body.classList.toggle('nav-hidden', !navReady);
   mainEl.innerHTML = renderView();
   document.title = `${screenLabel()} · SCAD`;
   if (preserveScroll) window.scrollTo(0, y);

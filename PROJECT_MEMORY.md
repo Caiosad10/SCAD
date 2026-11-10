@@ -195,6 +195,10 @@ Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
 - Cópia fresca da produção migrada: 41 documentos, 246 verificações, 6 critérios, 25 concluídas; conferência de coleção/processo e último documento.
 - Navegador real (Edge headless): troca de perfil, abertura de coleção/processo, barra oculta/animada, novo processo com 5 critérios copiados, nova coleção, onboarding de instalação vazia, importação de arquivo, critério e processo pela UI, documento inativado/reativado, matriz com célula “—” e selo Inativo, atividade com autor.
 - Reinício sobre estado já v2 não remigra (idempotente). Backup pré-migração presente.
+- CSV validado: 246 linhas, colunas Coleção/Processo/Código/Documento/Situação do documento/Critério/Resultado/Nota/Data; nome `scad-ISO9001-DC-...csv`.
+- Processo com **todos os documentos inativos** calcula 100% e conta o documento como verificado; coleção continua ponderada por verificações ativas.
+- Rollback testado com o backup v1: servidor v1 abre a cópia restaurada com 41 docs/246 checks/6 critérios.
+- Retomada de rota após reload e cache de sessão funcionando no escopo do processo.
 - Nenhuma alteração foi feita em `data/` nem no processo 4177.
 
 **Deploy (pendente de confirmação explícita)**
