@@ -14,9 +14,12 @@ import {
   nextPendingDoc,
   overall,
   pendingQueue,
+  reviewOfDoc,
+  reviewQueueItems,
+  currentProfile,
   ui,
 } from '../store.js';
-import { renderChecks, docSummaryHtml } from './checks.js';
+import { renderChecks, docSummaryHtml, presenceLine } from './checks.js';
 
 function lastUpdate(state, docId) {
   const checks = state.checks.filter((c) => c.docId === docId);
@@ -76,8 +79,13 @@ export function renderWorkbench(state) {
   const index = state.documents.findIndex((d) => d.id === doc.id);
   const kind = fileKind(doc.name, doc.mime);
   const s = overall(state);
+  const reviewer = currentProfile(state)?.role === 'reviewer';
+  const review = reviewOfDoc(state, doc.id);
+  const canApprove = reviewer && review.status === 'awaiting';
 
-  const queueDocs = (ui.queueAll ? state.documents : pendingQueue(state)).slice();
+  const queueDocs = (
+    ui.queueReview ? reviewQueueItems(state) : ui.queueAll ? state.documents : pendingQueue(state)
+  ).slice();
   if (!queueDocs.some((d) => d.id === doc.id)) queueDocs.unshift(doc);
 
   const prev = state.documents[index - 1] || null;
@@ -111,11 +119,31 @@ export function renderWorkbench(state) {
     s.total > 0 && s.pending === 0
       ? `<section class="card done-card">` +
         `<span class="done__icon">${icon('check', 18)}</span>` +
-        `<div class="done-card__copy"><h2>Análise concluída</h2>` +
-        `<p>${s.nc + s.obs ? `${s.nc} não conforme(s) e ${s.obs} observação(ões) registradas. Revise os apontamentos antes de encerrar.` : 'Todas as verificações foram avaliadas e não há apontamentos.'}</p></div>` +
+        `<div class="done-card__copy"><h2>${
+          review.status === 'approved'
+            ? 'Documento aprovado'
+            : review.status === 'attention'
+              ? 'Revisão com sinalização'
+              : 'Análise concluída'
+        }</h2>` +
+        `<p>${
+          review.status === 'approved'
+            ? 'A revisão deste documento foi concluída.'
+            : review.status === 'attention'
+              ? 'Há critério sinalizado pelo revisor. Corrija e o documento volta para a revisão.'
+              : s.nc + s.obs
+                ? `${s.nc} não conforme(s) e ${s.obs} observação(ões) registradas. Revise os apontamentos antes de encerrar.`
+                : 'Todas as verificações foram avaliadas; o documento está pronto para revisão.'
+        }</p></div>` +
         `<div class="done-card__actions">` +
+        (canApprove
+          ? `<button type="button" class="btn btn--primary btn--sm" data-action="review-approve" data-id="${doc.id}">${icon(
+              'check',
+              15
+            )} Aprovar documento</button>`
+          : '') +
         `<a class="btn btn--secondary btn--sm" href="#/apontamentos">Apontamentos</a>` +
-        `<button type="button" class="btn btn--primary btn--sm" data-action="export-csv">Exportar CSV</button>` +
+        `<button type="button" class="btn btn--secondary btn--sm" data-action="export-csv">Exportar CSV</button>` +
         `</div></section>`
       : '';
 
@@ -126,10 +154,17 @@ export function renderWorkbench(state) {
     `<div class="doc-head__copy">` +
     `<p class="eyebrow">Bancada · documento ${index + 1} de ${state.documents.length} · ${fileKindLabel(kind)}</p>` +
     `<h2 class="doc-head__title">${esc(doc.name)}</h2>` +
+    `<p class="doc-presence" data-presence="${doc.id}">${presenceLine(doc.id)}</p>` +
     `<p class="page__sub" data-doc-summary>${docSummaryHtml(state, doc)}` +
     (updated ? `<span aria-hidden="true">·</span>última edição ${esc(relTime(updated))}` : '') +
     `</p></div>` +
     `<div class="page__actions">` +
+    (canApprove
+      ? `<button type="button" class="btn btn--primary" data-action="review-approve" data-id="${doc.id}">${icon(
+          'check',
+          15
+        )} Aprovar documento</button>`
+      : '') +
     `<button type="button" class="btn btn--secondary" data-action="doc-preview" data-id="${doc.id}">${icon(
       'external',
       15
@@ -157,14 +192,25 @@ export function renderWorkbench(state) {
     `<div class="queue__head">` +
     `<span class="queue__title">Fila <b>${queueDocs.length}</b></span>` +
     `<div class="segmented segmented--mini" role="group" aria-label="Escopo da fila">` +
-    `<button type="button" data-action="queue-scope" data-scope="pending" aria-pressed="${!ui.queueAll}">Pendentes</button>` +
+    `<button type="button" data-action="queue-scope" data-scope="pending" aria-pressed="${
+      !ui.queueAll && !ui.queueReview
+    }">Pendentes</button>` +
     `<button type="button" data-action="queue-scope" data-scope="all" aria-pressed="${ui.queueAll}">Todos</button>` +
+    (reviewer
+      ? `<button type="button" data-action="queue-scope" data-scope="review" aria-pressed="${ui.queueReview}">Revisão</button>`
+      : '') +
     `</div></div>` +
     `<div class="queue__list">${
       queue ||
-      `<div class="queue__empty">Nenhum documento pendente. Bom trabalho.</div>`
+      `<div class="queue__empty">${
+        ui.queueReview ? 'Nenhum documento aguardando revisão.' : 'Nenhum documento pendente. Bom trabalho.'
+      }</div>`
     }</div>` +
-    `<p class="queue__hint">Documentos verificados continuam acessíveis em “Todos”.</p>` +
+    `<p class="queue__hint">${
+      ui.queueReview
+        ? 'Documentos concluídos esperando revisão ou com sinalização.'
+        : 'Documentos verificados continuam acessíveis em “Todos”.'
+    }</p>` +
     `</aside>` +
     `<section class="card checks" aria-label="Verificações do documento">` +
     renderChecks(state, doc, { footer: foot }) +

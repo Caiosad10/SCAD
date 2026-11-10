@@ -19,6 +19,9 @@ import {
   collectionById,
   processById,
   currentProfile,
+  reviewOfDoc,
+  reviewQueueItems,
+  checkReview,
 } from './store.js';
 import {
   esc,
@@ -45,7 +48,7 @@ import { renderWorkbench, resolveWorkbenchDoc } from './views/workbench.js';
 import { renderFindings, renderFindingsResults } from './views/findings.js';
 import { renderSettings } from './views/settings.js';
 import { renderCollections, renderCollection } from './views/collections.js';
-import { renderCheckRow, docSummaryHtml, checksHeadHtml, doneBannerHtml } from './views/checks.js';
+import { renderCheckRow, docSummaryHtml, checksHeadHtml, doneBannerHtml, presenceLine } from './views/checks.js';
 
 const NAV = [
   { id: 'dashboard', href: '#/', label: 'Painel', icon: 'panel' },
@@ -101,6 +104,8 @@ let navActive = null;
 let mastheadMode = null;
 let pendingScrollY = 0;
 let scrollSaveTimer = 0;
+let presenceTimer = 0;
+let presenceDocId = null;
 
 /* ---------------------------------------------------------------- boot */
 
@@ -124,6 +129,7 @@ function saveSession() {
         findFilter: ui.findFilter || 'all',
         findQuery: ui.findQuery || '',
         queueAll: Boolean(ui.queueAll),
+        queueReview: Boolean(ui.queueReview),
         scrollY: Math.round(window.scrollY || 0),
         at: Date.now(),
       })
@@ -169,6 +175,7 @@ function restoreSession() {
   if (typeof saved.findFilter === 'string') ui.findFilter = saved.findFilter;
   if (typeof saved.findQuery === 'string') ui.findQuery = saved.findQuery;
   ui.queueAll = Boolean(saved.queueAll);
+  ui.queueReview = Boolean(saved.queueReview);
   pendingScrollY = Math.max(0, Number(saved.scrollY) || 0);
   return true;
 }
@@ -220,6 +227,7 @@ async function boot() {
     renderAll();
     revealApp(true);
     restoreScroll();
+    if (ui.route.name === 'dashboard') staggerDashboard();
     paintedFromCache = true;
   }
 
@@ -258,6 +266,7 @@ async function boot() {
   rememberRoute();
   renderAll({ preserveScroll: paintedFromCache });
   revealApp();
+  if (ui.route.name === 'dashboard' && !paintedFromCache) staggerDashboard();
   if (!paintedFromCache) restoreScroll();
   if (!profile) showProfilePicker(base.profiles || []);
   setInterval(syncIfIdle, 12000);
@@ -421,6 +430,7 @@ async function handleRouteChange() {
         { duration: 210, easing: 'cubic-bezier(0.2, 0.7, 0.25, 1)' }
       );
     }
+    if (ui.route.name === 'dashboard') staggerDashboard();
   } finally {
     mainEl.style.pointerEvents = '';
     navigating = false;
@@ -434,6 +444,24 @@ async function handleRouteChange() {
 
 function closeDialogs() {
   document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close());
+}
+
+/** Entrada em cascata dos blocos do painel (só na troca de tela, não a cada salvamento). */
+function staggerDashboard() {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const root = mainEl.firstElementChild;
+  if (!root) return;
+  const blocks = [...root.children].filter((el) => el instanceof HTMLElement);
+  blocks.forEach((el, index) => {
+    el.style.animation = `content-rise 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) ${
+      Math.min(index, 5) * 0.06
+    }s both`;
+  });
+  setTimeout(() => {
+    blocks.forEach((el) => {
+      el.style.animation = '';
+    });
+  }, 1200);
 }
 
 /* -------------------------------------------------------------- render */
@@ -459,6 +487,7 @@ function renderAll({ preserveScroll = false } = {}) {
   document.title = `${screenLabel()} · SCAD`;
   if (preserveScroll) window.scrollTo(0, y);
   else window.scrollTo(0, 0);
+  syncPresence();
 }
 
 function renderView() {
@@ -602,7 +631,8 @@ function renderMasthead() {
   const eyebrowText = screenLabel();
   if (eyebrow && eyebrow.textContent !== eyebrowText) eyebrow.textContent = eyebrowText;
   const title = mastEl.querySelector('[data-mast-title]');
-  const titleText = process.name;
+  // Coleção + processo: deixa claro em que arquivo e processo se está trabalhando.
+  const titleText = collection ? `${collection.name} - ${process.name}` : process.name;
   if (title && title.textContent !== titleText) title.textContent = titleText;
   const meta = mastEl.querySelector('[data-mast-meta]');
   if (meta) meta.innerHTML = metaLine(state);
@@ -750,13 +780,21 @@ function renderNav() {
 /* ------------------------------------------------------------- eventos */
 
 function bindEvents() {
-  window.addEventListener('hashchange', () => {
+  // No Safari/Chrome a troca de hash dispara `hashchange` e `popstate` para a
+  // mesma navegação; sem deduplicar, a tela era montada duas vezes (a animação
+  // de entrada sumia e o cursor de digitação era perdido).
+  let lastHash = null;
+  let lastHashAt = 0;
+  const onHashEvent = () => {
+    const hash = location.hash || '#/';
+    const at = performance.now();
+    if (hash === lastHash && at - lastHashAt < 150) return;
+    lastHash = hash;
+    lastHashAt = at;
     handleRouteChange();
-  });
-
-  window.addEventListener('popstate', () => {
-    handleRouteChange();
-  });
+  };
+  window.addEventListener('hashchange', onHashEvent);
+  window.addEventListener('popstate', onHashEvent);
 
   window.addEventListener('resize', () => {
     if (navReady) updatePill();
@@ -846,7 +884,29 @@ function bindEvents() {
   document.addEventListener('keydown', onKeydown);
 
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) syncIfIdle();
+    if (!document.hidden) {
+      syncIfIdle();
+      heartbeatPresence();
+    }
+  });
+
+  window.addEventListener('pagehide', () => {
+    try {
+      const docId = presenceRouteDoc();
+      if (!docId) return;
+      const headers = { 'Content-Type': 'application/json' };
+      if (ui.profileId) headers['X-SCAD-Actor'] = ui.profileId;
+      const pid = getState()?.process?.id;
+      if (pid) headers['X-SCAD-Process'] = pid;
+      fetch('/api/presence', {
+        method: 'POST',
+        keepalive: true,
+        headers,
+        body: JSON.stringify({ docId: null }),
+      }).catch(() => {});
+    } catch {
+      /* saída best-effort */
+    }
   });
 }
 
@@ -926,6 +986,8 @@ function showProfilePicker(profiles = []) {
       configureApi({ actor: button.dataset.profileId });
       dialog.close();
       syncProfileChip();
+      heartbeatPresence();
+      renderAll({ preserveScroll: true });
       if (profile) toast(`Perfil ativo: ${profile.name}`);
     });
   });
@@ -942,6 +1004,7 @@ async function openProcess(processId) {
     ui.docFilter = 'all';
     ui.docQuery = '';
     ui.queueAll = false;
+    ui.queueReview = false;
     saveSession();
     navigate('#/', { force: true });
   } catch (err) {
@@ -1133,6 +1196,167 @@ function showCopyCriteria() {
   });
 }
 
+/* -------------------------------------------------------------- revisão */
+
+function openApproveReview(docId) {
+  const state = getState();
+  const doc = docById(state, docId);
+  if (!doc) return;
+  if (currentProfile(state)?.role !== 'reviewer') {
+    toast('Apenas o revisor (Diogenes) aprova documentos.', 'err');
+    return;
+  }
+  const review = reviewOfDoc(state, docId);
+  if (review.status === 'analysis') {
+    toast('Ainda há verificações pendentes neste documento.', 'err');
+    return;
+  }
+  if (review.status === 'attention' || review.flagged) {
+    toast('Este documento tem sinalizações: o analista precisa corrigir antes de aprovar.', 'err');
+    return;
+  }
+  const dialog = openSheet({
+    title: 'Aprovar documento',
+    eyebrow: 'Revisão',
+    body:
+      `<p class="sheet-message">${esc(doc.name)}</p>` +
+      `<p class="sheet__note">${review.done} verificações serão marcadas como aprovadas${
+        review.flagged ? ` — a sinalização de ${review.flagged} critério(s) será substituída pela aprovação` : ''
+      }. A mensagem é opcional.</p>` +
+      `<div class="field"><label for="review-approve-message">Mensagem <span class="field__optional">opcional</span></label>` +
+      `<textarea id="review-approve-message" rows="3" maxlength="2000" placeholder="Ex.: revisado, sem pendências."></textarea></div>`,
+    footer:
+      `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
+      `<button type="button" class="btn btn--primary" data-confirm>${icon('check', 16)} Aprovar documento</button>`,
+  });
+  dialog.querySelector('[data-cancel]')?.addEventListener('click', () => dialog.close());
+  const confirm = dialog.querySelector('[data-confirm]');
+  confirm?.addEventListener('click', async () => {
+    const message = (dialog.querySelector('#review-approve-message')?.value || '').trim();
+    confirm.disabled = true;
+    try {
+      const res = await api.approveReview(doc.id, message);
+      setState(res.state);
+      dialog.close();
+      renderAll({ preserveScroll: true });
+      toast('Documento aprovado.');
+    } catch (err) {
+      confirm.disabled = false;
+      toast(err.message, 'err');
+    }
+  });
+}
+
+function openFlagReview(docId, checkId) {
+  const state = getState();
+  const doc = docById(state, docId);
+  const check = (state.checks || []).find((item) => item.id === checkId);
+  if (!doc || !check) return;
+  if (currentProfile(state)?.role !== 'reviewer') {
+    toast('Apenas o revisor (Diogenes) sinaliza critérios.', 'err');
+    return;
+  }
+  const criterion = (state.criteria || []).find((item) => item.id === check.criterionId);
+  const dialog = openSheet({
+    title: 'Sinalizar critério',
+    eyebrow: `Revisão · ${criterion?.label || 'critério'}`,
+    body:
+      `<p class="sheet-message">${esc(doc.name)}</p>` +
+      `<p class="sheet__note">O critério fica em <b>atenção</b> e os demais verificados são aprovados. A mensagem é obrigatória e fica visível para o analista.</p>` +
+      `<div class="field"><label for="review-flag-message">O que precisa ser corrigido?</label>` +
+      `<textarea id="review-flag-message" rows="3" maxlength="2000" placeholder="Ex.: a nota não cita a evidência do relatório."></textarea>` +
+      `<p class="field__hint" data-flag-hint>Escreva a mensagem para sinalizar.</p></div>`,
+    footer:
+      `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
+      `<button type="button" class="btn btn--danger" data-confirm disabled>${icon('flag', 15)} Sinalizar</button>`,
+  });
+  const area = dialog.querySelector('#review-flag-message');
+  const confirm = dialog.querySelector('[data-confirm]');
+  const hint = dialog.querySelector('[data-flag-hint]');
+  const sync = () => {
+    const ready = (area?.value || '').trim().length >= 3;
+    if (confirm) confirm.disabled = !ready;
+    if (hint) {
+      hint.textContent = ready
+        ? 'A mensagem aparece no critério para o analista.'
+        : 'Escreva a mensagem para sinalizar.';
+    }
+  };
+  area?.addEventListener('input', sync);
+  dialog.querySelector('[data-cancel]')?.addEventListener('click', () => dialog.close());
+  confirm?.addEventListener('click', async () => {
+    const message = (area?.value || '').trim();
+    if (!message) return;
+    confirm.disabled = true;
+    try {
+      const res = await api.flagReview(doc.id, check.id, message, check.updatedAt);
+      setState(res.state);
+      dialog.close();
+      renderAll({ preserveScroll: true });
+      toast('Critério sinalizado.');
+    } catch (err) {
+      confirm.disabled = false;
+      toast(err.message, 'err');
+    }
+  });
+  setTimeout(() => area?.focus(), 80);
+}
+
+/* ------------------------------------------------------------- presença */
+
+function presenceRouteDoc() {
+  const state = getState();
+  if (!state?.process) return null;
+  if (ui.route.name === 'document') return ui.route.id;
+  if (ui.route.name === 'workbench') {
+    const doc = resolveWorkbenchDoc(state);
+    return doc?.id || null;
+  }
+  return null;
+}
+
+function syncPresence() {
+  const docId = presenceRouteDoc();
+  if (docId === presenceDocId && presenceTimer) return;
+  stopPresence();
+  presenceDocId = docId;
+  if (!docId) {
+    if (ui.presence.length) {
+      ui.presence = [];
+      refreshPresence();
+    }
+    return;
+  }
+  heartbeatPresence();
+  presenceTimer = setInterval(heartbeatPresence, 12000);
+}
+
+function stopPresence() {
+  clearInterval(presenceTimer);
+  presenceTimer = 0;
+}
+
+async function heartbeatPresence() {
+  const docId = presenceRouteDoc();
+  if (!docId || document.hidden) return;
+  try {
+    const res = await api.presence(docId);
+    const next = Array.isArray(res?.present) ? res.present : [];
+    if (JSON.stringify(next) === JSON.stringify(ui.presence)) return;
+    ui.presence = next;
+    refreshPresence();
+  } catch {
+    /* presença é acessório: falhas não interrompem o trabalho */
+  }
+}
+
+function refreshPresence() {
+  document.querySelectorAll('[data-presence]').forEach((node) => {
+    const docId = node.getAttribute('data-presence');
+    node.innerHTML = presenceLine(docId);
+  });
+}
+
 const ACTIONS = {
   'open-collection': (el) => navigate(`#/colecoes/${el.dataset.id}`),
   'copy-criteria': () => showCopyCriteria(),
@@ -1178,9 +1402,26 @@ const ACTIONS = {
     renderAll({ preserveScroll: true });
   },
   'queue-scope': (el) => {
-    ui.queueAll = el.dataset.scope === 'all';
+    const scope = el.dataset.scope || 'pending';
+    ui.queueAll = scope === 'all';
+    ui.queueReview = scope === 'review';
     saveSession();
     renderAll({ preserveScroll: true });
+  },
+  'review-approve': (el) => openApproveReview(el.dataset.id),
+  'review-flag': (el) => openFlagReview(el.dataset.docId, el.dataset.checkId),
+  'review-queue': () => {
+    ui.queueReview = true;
+    ui.queueAll = false;
+    saveSession();
+    const first = reviewQueueItems(getState())[0];
+    if (first) navigate(`#/analisar/${first.id}`);
+    else navigate('#/analisar');
+  },
+  'review-filter': (el) => {
+    ui.docFilter = el.dataset.filter || 'review';
+    saveSession();
+    navigate('#/documentos');
   },
   'set-check': (el) => setCheckStatus(el.dataset.id, el.dataset.status, { focusNote: true }),
   'next-check': (el) => {
@@ -1898,6 +2139,7 @@ async function resetAll() {
     ui.findFilter = 'all';
     ui.findQuery = '';
     ui.queueAll = false;
+    ui.queueReview = false;
     navigate('#/', { force: true });
     toast('Dados apagados. Uma nova coleção pode ser criada.');
   } catch (err) {
@@ -2036,13 +2278,19 @@ function exportCsv() {
       'Critério',
       'Resultado',
       'Nota',
+      'Revisão',
+      'Revisor',
+      'Mensagem da revisão',
+      'Revisado em',
       'Atualizado em',
     ],
   ];
+  const reviewLabels = { pending: 'Aguardando revisão', approved: 'Aprovada', flagged: 'Sinalizada' };
   for (const doc of state.documents) {
     for (const criterion of crit) {
       const check = state.checks.find((c) => c.docId === doc.id && c.criterionId === criterion.id);
       if (!check) continue;
+      const review = checkReview(check);
       rows.push([
         collectionName,
         processName,
@@ -2052,6 +2300,10 @@ function exportCsv() {
         criterion.label,
         doc.active === false ? 'Suspenso' : STATUS_LABEL[check.status] || check.status,
         check.note || '',
+        doc.active === false ? '' : reviewLabels[review] || '',
+        doc.active === false ? '' : check.review?.byName || '',
+        doc.active === false ? '' : check.review?.note || '',
+        doc.active === false ? '' : check.review?.at ? new Date(check.review.at).toLocaleString('pt-BR') : '',
         check.updatedAt ? new Date(check.updatedAt).toLocaleString('pt-BR') : '',
       ]);
     }

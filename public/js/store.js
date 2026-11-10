@@ -23,6 +23,8 @@ export const ui = {
   findQuery: '',
   notesOpen: new Set(),
   queueAll: false,
+  queueReview: false,
+  presence: [],
   health: null,
   activeProcessId: readStored('scad:activeProcess'),
   profileId: readStored('scad:profile'),
@@ -203,6 +205,7 @@ export function overall(s = state) {
   const obs = activeChecks.filter((c) => c.status === 'obs').length;
   const ok = activeChecks.filter((c) => c.status === 'ok').length;
   const pendingDocs = activeDocs.filter((d) => docStats(s, d.id).pending > 0).length;
+  const reviewStates = docs.map((doc) => reviewOfDoc(s, doc.id).status);
   return {
     docs: docs.length,
     activeDocs: activeDocs.length,
@@ -217,6 +220,9 @@ export function overall(s = state) {
     na: 0,
     suspended: suspended.length,
     pct: total ? Math.round((done / total) * 100) : 0,
+    reviewAwaiting: reviewStates.filter((value) => value === 'awaiting').length,
+    reviewAttention: reviewStates.filter((value) => value === 'attention').length,
+    reviewApproved: reviewStates.filter((value) => value === 'approved').length,
   };
 }
 
@@ -278,4 +284,60 @@ export function docStatusLabel(s, docId) {
   if (flag === 'pending') return 'Em análise';
   if (flag === 'done') return 'Verificado';
   return 'Sem verificações';
+}
+
+/* -------------------------------------------------------------- revisão */
+
+export const REVIEW_LABEL = {
+  analysis: 'Em análise',
+  awaiting: 'Aguardando revisão',
+  attention: 'Atenção',
+  approved: 'Aprovado',
+  dispensed: 'Dispensado',
+  empty: 'Sem verificações',
+};
+
+export function checkReview(check) {
+  const status = check?.review?.status;
+  return status === 'approved' || status === 'flagged' ? status : 'pending';
+}
+
+export function reviewOfDoc(s, docId) {
+  const doc = docById(s, docId);
+  const checks = checksOfDoc(s, docId);
+  const done = checks.filter((check) => check.status !== 'pending');
+  const flagged = done.filter((check) => checkReview(check) === 'flagged');
+  const approved = done.filter((check) => checkReview(check) === 'approved');
+  let status = 'analysis';
+  if (doc?.active === false) status = 'dispensed';
+  else if (!checks.length) status = 'empty';
+  else if (done.length < checks.length) status = 'analysis';
+  else if (flagged.length) status = 'attention';
+  else if (approved.length === done.length) status = 'approved';
+  else status = 'awaiting';
+  return {
+    status,
+    total: checks.length,
+    done: done.length,
+    approved: approved.length,
+    flagged: flagged.length,
+    awaiting: Math.max(0, done.length - approved.length - flagged.length),
+  };
+}
+
+export function reviewQueueItems(s) {
+  return (s?.documents || []).filter((doc) => {
+    const review = reviewOfDoc(s, doc.id);
+    return review.status === 'awaiting' || review.status === 'attention';
+  });
+}
+
+/** Documento pronto para revisão: todas as verificações com resultado e nenhuma aprovada ainda. */
+export function canReviewDoc(s, docId) {
+  const review = reviewOfDoc(s, docId);
+  return review.status === 'awaiting' || review.status === 'attention';
+}
+
+export function presenceOnDoc(docId) {
+  return (ui.presence || []).filter((item) => item.docId === docId);
 }

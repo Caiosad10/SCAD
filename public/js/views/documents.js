@@ -12,20 +12,34 @@ import {
   fileExt,
 } from '../ui.js';
 import { icon, statusMark } from '../icons.js';
-import { docById, docStats, docFlag, criteriaSorted, overall, ui } from '../store.js';
-import { renderChecks } from './checks.js';
+import {
+  docById,
+  docStats,
+  docFlag,
+  criteriaSorted,
+  overall,
+  ui,
+  reviewOfDoc,
+  currentProfile,
+} from '../store.js';
+import { renderChecks, docTagHtml, presenceLine } from './checks.js';
 
 const FILTERS = [
   { id: 'all', label: 'Todos' },
   { id: 'pending', label: 'Pendentes' },
   { id: 'done', label: 'Concluídos' },
   { id: 'flagged', label: 'Com apontamento' },
+  { id: 'review', label: 'Revisão' },
   { id: 'inactive', label: 'Inativos' },
 ];
 
 function docStamp(state, doc) {
   if (doc.active === false) return stamp('na', { label: 'Inativo' });
+  const review = reviewOfDoc(state, doc.id);
   const st = docStats(state, doc.id);
+  if (review.status === 'approved') return stamp('ok', { label: 'Aprovado' });
+  if (review.status === 'attention') return stamp('nc', { label: 'Atenção' });
+  if (review.status === 'awaiting') return stamp('pending', { label: 'Revisão' });
   if (st.nc) return stamp('nc', { label: 'Apontamento' });
   if (st.obs) return stamp('obs', { label: 'Apontamento' });
   if (st.pending) return stamp('pending', { label: 'Em análise' });
@@ -43,12 +57,18 @@ export function filterDocuments(state) {
       if (ui.docFilter === 'pending') return flag !== 'inactive' && docStats(state, doc.id).pending > 0;
       if (ui.docFilter === 'done') return flag !== 'inactive' && docStats(state, doc.id).pending === 0;
       if (ui.docFilter === 'flagged') return flag === 'flagged';
+      if (ui.docFilter === 'review') {
+        const review = reviewOfDoc(state, doc.id).status;
+        return review === 'awaiting' || review === 'attention';
+      }
+      if (ui.docFilter === 'awaiting') return reviewOfDoc(state, doc.id).status === 'awaiting';
+      if (ui.docFilter === 'attention') return reviewOfDoc(state, doc.id).status === 'attention';
       return true;
     });
 }
 
 function filterCounts(state) {
-  const counts = { all: state.documents.length, pending: 0, done: 0, flagged: 0, inactive: 0 };
+  const counts = { all: state.documents.length, pending: 0, done: 0, flagged: 0, review: 0, inactive: 0 };
   for (const doc of state.documents) {
     if (doc.active === false) {
       counts.inactive += 1;
@@ -58,6 +78,8 @@ function filterCounts(state) {
     if (st.pending) counts.pending += 1;
     else counts.done += 1;
     if (st.nc || st.obs) counts.flagged += 1;
+    const review = reviewOfDoc(state, doc.id).status;
+    if (review === 'awaiting' || review === 'attention') counts.review += 1;
   }
   return counts;
 }
@@ -137,11 +159,14 @@ export function renderDocuments(state) {
   const counts = filterCounts(state);
   const crit = criteriaSorted(state);
   const s = overall(state);
+  // A faixa de revisão do painel abre já filtrado por “aguardando” ou “atenção”;
+  // na barra de filtros ambos aparecem como o filtro “Revisão”.
+  const activeFilter = ui.docFilter === 'awaiting' || ui.docFilter === 'attention' ? 'review' : ui.docFilter;
 
   const tabs = FILTERS.map(
     (filter) =>
       `<button type="button" data-action="filter-docs" data-filter="${filter.id}" ` +
-      `aria-pressed="${ui.docFilter === filter.id}">${esc(filter.label)}` +
+      `aria-pressed="${activeFilter === filter.id}">${esc(filter.label)}` +
       `<span class="segmented__count">${counts[filter.id]}</span></button>`
   ).join('');
 
@@ -189,6 +214,8 @@ export function renderDocument(state, docId) {
   const index = state.documents.findIndex((d) => d.id === doc.id);
   const st = docStats(state, doc.id);
   const kind = fileKind(doc.name, doc.mime);
+  const review = reviewOfDoc(state, doc.id);
+  const canApprove = currentProfile(state)?.role === 'reviewer' && review.status === 'awaiting';
 
   return (
     `<div class="page page--document">` +
@@ -197,14 +224,24 @@ export function renderDocument(state, docId) {
     `<div class="doc-head__copy">` +
     `<p class="eyebrow">Documento ${index + 1} de ${state.documents.length} · ${fileKindLabel(kind)}</p>` +
     `<h2 class="doc-head__title">${esc(doc.name)}</h2>` +
+    `<p class="doc-presence" data-presence="${doc.id}">${presenceLine(doc.id)}</p>` +
     `<p class="page__sub">${fmtBytes(doc.size)} <span aria-hidden="true">·</span> importado em ${esc(
       fmtDate(doc.addedAt)
     )} <span aria-hidden="true">·</span> <span data-doc-summary>${
       doc.active === false ? 'Inativo' : `${st.done}/${st.total} verificações`
-    }</span></p>` +
+    }</span> <span aria-hidden="true">·</span> ${docTagHtml(state, doc)}</p>` +
     `</div>` +
     `<div class="page__actions">` +
-    `<a class="btn btn--primary" href="#/analisar/${doc.id}">${icon('analyze', 16)} Ir para a bancada</a>` +
+    (canApprove
+      ? `<button type="button" class="btn btn--primary" data-action="review-approve" data-id="${doc.id}">${icon(
+          'check',
+          15
+        )} Aprovar documento</button>`
+      : '') +
+    `<a class="btn ${canApprove ? 'btn--secondary' : 'btn--primary'}" href="#/analisar/${doc.id}">${icon(
+      'analyze',
+      16
+    )} Ir para a bancada</a>` +
     `<button type="button" class="btn btn--secondary" data-action="doc-preview" data-id="${doc.id}">${icon(
       'external',
       15

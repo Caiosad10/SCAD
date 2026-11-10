@@ -73,6 +73,11 @@ export const api = {
   updateCheck: (id, patch) => request('PATCH', `/api/checks/${encodeURIComponent(id)}`, patch),
   setMeta: (pid, payload) => request('POST', '/api/meta', { processId: pid, ...payload }),
 
+  approveReview: (docId, message = '') => request('POST', '/api/review/approve', { docId, message }),
+  flagReview: (docId, checkId, message, checkVersion) =>
+    request('POST', '/api/review/flag', { docId, checkId, message, checkVersion }),
+  presence: (docId) => request('POST', '/api/presence', { docId }),
+
   reset: () => request('POST', '/api/reset', { confirm: true }),
   importState: (state) => request('POST', '/api/import', { state }),
   exportUrl: '/api/export',

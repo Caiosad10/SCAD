@@ -125,7 +125,7 @@ function normalizeState(input) {
     processes: array(s.processes),
     criteria: array(s.criteria),
     documents,
-    checks: array(s.checks),
+    checks: array(s.checks).map((check) => ({ ...check, review: normalizeReview(check.review) })),
     meta: {
       lastDocByProcess: meta.lastDocByProcess && typeof meta.lastDocByProcess === 'object' ? meta.lastDocByProcess : {},
       lastCheckId: meta.lastCheckId || null,
@@ -351,6 +351,99 @@ function processFromRequest(req) {
   return id && findProcess(id) ? id : null;
 }
 
+/* ---------------------------------------------------------------- revisão */
+
+const REVIEW_STATUSES = new Set(['pending', 'approved', 'flagged']);
+
+function normalizeReview(review) {
+  const source = review && typeof review === 'object' ? review : {};
+  return {
+    status: REVIEW_STATUSES.has(source.status) ? source.status : 'pending',
+    by: source.by || null,
+    byName: source.byName || null,
+    at: source.at || null,
+    note: typeof source.note === 'string' ? source.note : '',
+    checkVersion: source.checkVersion || null,
+    history: array(source.history).slice(-8),
+  };
+}
+
+function setReview(check, status, actor, extra = {}) {
+  const entry = {
+    status,
+    by: actor?.id || null,
+    byName: actor?.name || null,
+    at: now(),
+    note: extra.note || '',
+    ...(extra.auto ? { auto: true } : {}),
+  };
+  const history = array(check.review?.history).slice(-7);
+  history.push(entry);
+  check.review = {
+    status,
+    by: entry.by,
+    byName: entry.byName,
+    at: entry.at,
+    note: entry.note,
+    checkVersion: check.updatedAt || null,
+    history,
+  };
+}
+
+function requireReviewer(actor) {
+  if (!actor) throw new HttpError(401, 'Selecione o perfil do revisor (Diogenes) para aprovar ou sinalizar.');
+  if (actor.role !== 'reviewer') throw new HttpError(403, 'Apenas o revisor pode aprovar ou sinalizar verificações.');
+  return actor;
+}
+
+/** Estado de revisão derivado dos checks do documento. */
+function docReview(doc) {
+  const checks = state.checks.filter((check) => check.docId === doc.id);
+  const done = checks.filter((check) => check.status !== 'pending');
+  const flagged = done.filter((check) => check.review?.status === 'flagged');
+  const approved = done.filter((check) => check.review?.status === 'approved');
+  let status = 'analysis';
+  if (doc.active === false) status = 'dispensed';
+  else if (!checks.length) status = 'empty';
+  else if (done.length < checks.length) status = 'analysis';
+  else if (flagged.length) status = 'attention';
+  else if (approved.length === done.length) status = 'approved';
+  else status = 'awaiting';
+  return {
+    status,
+    total: checks.length,
+    done: done.length,
+    approved: approved.length,
+    flagged: flagged.length,
+    awaiting: Math.max(0, done.length - approved.length - flagged.length),
+  };
+}
+
+/* --------------------------------------------------------------- presença */
+
+const PRESENCE_TTL = 45000;
+const presence = new Map();
+
+function prunePresence() {
+  const limit = Date.now() - PRESENCE_TTL;
+  for (const [key, item] of presence) {
+    if (item.at < limit) presence.delete(key);
+  }
+}
+
+function presenceFor(processId, selfActorId) {
+  prunePresence();
+  return [...presence.values()]
+    .filter((item) => item.processId === processId && item.actorId !== selfActorId && item.docId)
+    .map((item) => ({
+      actorId: item.actorId,
+      actorName: item.actorName,
+      docId: item.docId,
+      at: new Date(item.at).toISOString(),
+    }));
+}
+
+
 function log(text, extra = {}) {
   const context = requestContext.getStore() || {};
   const actor = extra.actor || context.actor || null;
@@ -396,6 +489,7 @@ function processStats(processId) {
     : docs.length > 0 && inactiveDocs === docs.length
       ? 100
       : 0;
+  const reviewStates = activeDocs.map((doc) => docReview(doc).status);
   return {
     docs: docs.length,
     activeDocs: activeDocs.length,
@@ -408,6 +502,10 @@ function processStats(processId) {
     nc,
     obs,
     pct,
+    awaitingDocs: reviewStates.filter((value) => value === 'awaiting').length,
+    attentionDocs: reviewStates.filter((value) => value === 'attention').length,
+    approvedDocs: reviewStates.filter((value) => value === 'approved').length,
+    reviewDocs: reviewStates.filter((value) => value === 'awaiting' || value === 'attention').length,
     suspendedChecks: state.checks.filter(
       (check) => activeDocIds.has(check.docId) === false && docs.some((doc) => doc.id === check.docId)
     ).length,
@@ -430,6 +528,10 @@ function collectionStats(collectionId) {
     pending: stats.reduce((sum, item) => sum + item.pending, 0),
     nc: stats.reduce((sum, item) => sum + item.nc, 0),
     obs: stats.reduce((sum, item) => sum + item.obs, 0),
+    awaitingDocs: stats.reduce((sum, item) => sum + item.awaitingDocs, 0),
+    attentionDocs: stats.reduce((sum, item) => sum + item.attentionDocs, 0),
+    approvedDocs: stats.reduce((sum, item) => sum + item.approvedDocs, 0),
+    reviewDocs: stats.reduce((sum, item) => sum + item.reviewDocs, 0),
     pct: total
       ? Math.round((done / total) * 100)
       : docs > 0 && inactiveDocs === docs
@@ -500,7 +602,7 @@ function scopedState(processId) {
     criteria: state.criteria
       .filter((criterion) => criterion.processId === processId)
       .sort((a, b) => a.order - b.order),
-    documents: docs,
+    documents: docs.map((doc) => ({ ...doc, review: docReview(doc) })),
     checks,
     meta: {
       lastDocId: state.meta.lastDocByProcess[processId] || null,
@@ -892,11 +994,26 @@ async function handleApi(req, res, pathname, url) {
       if (!doc) throw new HttpError(404, 'Documento da verificação não encontrado.');
       if (doc.active === false) throw new HttpError(409, 'Documento inativo: reative para editar verificações.');
       const previous = check.status;
+      const previousNote = check.note || '';
       if (body.status != null) check.status = body.status;
       if (note !== undefined) check.note = note;
       check.updatedAt = now();
       const actor = requestContext.getStore()?.actor;
       if (actor) check.authorId = actor.id;
+      const contentChanged = previous !== check.status || (note !== undefined && note !== previousNote);
+      // Revisão: verificação feita pelo revisor é auto-aprovada; alteração do
+      // analista em check aprovado/sinalizado devolve o check para a revisão.
+      if (check.status !== 'pending') {
+        if (actor?.role === 'reviewer') {
+          if (contentChanged || check.review?.status !== 'approved') {
+            setReview(check, 'approved', actor, { auto: true });
+          }
+        } else if (contentChanged && (check.review?.status === 'approved' || check.review?.status === 'flagged')) {
+          setReview(check, 'pending', actor, {});
+        }
+      } else if (check.review?.status !== 'pending') {
+        setReview(check, 'pending', actor, {});
+      }
       state.meta.lastDocByProcess[doc.processId] = check.docId;
       state.meta.lastCheckId = check.id;
       const criterion = state.criteria.find((item) => item.id === check.criterionId);
@@ -911,9 +1028,108 @@ async function handleApi(req, res, pathname, url) {
           processId: doc.processId,
         });
       }
-      return { rev: state.rev, check: { ...check }, activity: scopedActivity(doc.processId, 40) };
+      return {
+        rev: state.rev,
+        check: { ...check },
+        docReview: docReview(doc),
+        activity: scopedActivity(doc.processId, 40),
+      };
     });
     return sendJson(res, 200, result);
+  }
+
+  if (pathname === '/api/review/approve' && method === 'POST') {
+    const body = await readJson(req);
+    const doc = findDoc(String(body.docId || ''));
+    if (!doc) throw new HttpError(404, 'Documento não encontrado.');
+    const actor = requireReviewer(requestContext.getStore()?.actor);
+    const message = optionalText(body.message, 2000, 'mensagem da aprovação');
+    const result = await mutate(() => {
+      if (doc.active === false) {
+        throw new HttpError(409, 'Documento inativo: a dispensa tem fluxo próprio de revisão.');
+      }
+      const checks = state.checks.filter((check) => check.docId === doc.id);
+      const done = checks.filter((check) => check.status !== 'pending');
+      if (!checks.length) throw new HttpError(409, 'Documento sem verificações para revisar.');
+      if (done.length < checks.length) {
+        throw new HttpError(409, 'Ainda há verificações pendentes: o documento não está pronto para revisão.');
+      }
+      const flagged = done.filter((check) => check.review?.status === 'flagged');
+      if (flagged.length) {
+        throw new HttpError(
+          409,
+          'Há critérios sinalizados: o analista precisa corrigir e devolver o documento à revisão antes da aprovação.'
+        );
+      }
+      done.forEach((check) => setReview(check, 'approved', actor, { note: message }));
+      log(`Documento aprovado${message ? `: “${message}”` : ''}: ${doc.name}`, { processId: doc.processId });
+      return {
+        rev: state.rev,
+        state: scopedState(doc.processId),
+        review: docReview(doc),
+        activity: scopedActivity(doc.processId, 40),
+      };
+    });
+    return sendJson(res, 200, result);
+  }
+
+  if (pathname === '/api/review/flag' && method === 'POST') {
+    const body = await readJson(req);
+    const doc = findDoc(String(body.docId || ''));
+    if (!doc) throw new HttpError(404, 'Documento não encontrado.');
+    const actor = requireReviewer(requestContext.getStore()?.actor);
+    const check = state.checks.find((item) => item.id === String(body.checkId || ''));
+    if (!check || check.docId !== doc.id) {
+      throw new HttpError(404, 'Verificação não encontrada neste documento.');
+    }
+    const message = text(body.message, 2000, 'mensagem da sinalização');
+    const result = await mutate(() => {
+      if (doc.active === false) throw new HttpError(409, 'Documento inativo: não há o que sinalizar.');
+      if (check.status === 'pending') {
+        throw new HttpError(409, 'Só é possível sinalizar verificações já avaliadas.');
+      }
+      if (body.checkVersion && check.updatedAt && body.checkVersion !== check.updatedAt) {
+        throw new HttpError(409, 'A verificação mudou desde que você abriu o documento. Recarregue e revise de novo.');
+      }
+      state.checks
+        .filter((item) => item.docId === doc.id && item.id !== check.id)
+        .filter((item) => item.status !== 'pending' && item.review?.status !== 'flagged')
+        .forEach((item) => {
+          if (item.review?.status !== 'approved') setReview(item, 'approved', actor, { auto: true });
+        });
+      setReview(check, 'flagged', actor, { note: message });
+      const criterion = state.criteria.find((item) => item.id === check.criterionId);
+      log(`Critério sinalizado (${criterion?.label || 'critério'}): ${message}`, { processId: doc.processId });
+      return {
+        rev: state.rev,
+        state: scopedState(doc.processId),
+        review: docReview(doc),
+        activity: scopedActivity(doc.processId, 40),
+      };
+    });
+    return sendJson(res, 200, result);
+  }
+
+  if (pathname === '/api/presence' && method === 'POST') {
+    const body = await readJson(req);
+    const actor = requestContext.getStore()?.actor;
+    const processId = processFromRequest(req);
+    if (!actor || !processId) return sendJson(res, 200, { present: [] });
+    const requested = body.docId ? String(body.docId) : null;
+    const doc = requested ? findDoc(requested) : null;
+    const docId = doc && doc.processId === processId ? doc.id : null;
+    if (docId) {
+      presence.set(`${processId}:${actor.id}`, {
+        processId,
+        actorId: actor.id,
+        actorName: actor.name,
+        docId,
+        at: Date.now(),
+      });
+    } else {
+      presence.delete(`${processId}:${actor.id}`);
+    }
+    return sendJson(res, 200, { present: presenceFor(processId, actor.id) });
   }
 
   if (pathname === '/api/meta' && method === 'POST') {
@@ -1155,6 +1371,8 @@ async function boot() {
     }
     process.exit(1);
   });
+
+  setInterval(prunePresence, 30000).unref();
 
   server.listen(PORT, HOST, () => {
     const lan = lanUrls();

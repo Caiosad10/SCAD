@@ -17,6 +17,8 @@ import {
   docStats,
   nextPendingDoc,
   overall,
+  reviewOfDoc,
+  currentProfile,
 } from '../store.js';
 
 function countLabel(n, one, many) {
@@ -55,8 +57,25 @@ export function renderDashboard(state) {
   let title;
   let lead;
   let actions;
+  const reviewer = currentProfile(state)?.role === 'reviewer';
 
-  if (!docs.length) {
+  if (reviewer && (s.reviewAwaiting || s.reviewAttention)) {
+    title = 'Há documentos esperando sua revisão.';
+    const parts = [];
+    if (s.reviewAwaiting) {
+      parts.push(countLabel(s.reviewAwaiting, 'documento aguardando revisão', 'documentos aguardando revisão'));
+    }
+    if (s.reviewAttention) {
+      parts.push(countLabel(s.reviewAttention, 'documento com sinalização', 'documentos com sinalização'));
+    }
+    if (s.reviewApproved) {
+      parts.push(countLabel(s.reviewApproved, 'já aprovado', 'já aprovados'));
+    }
+    lead = `${parts.join(' · ')}.`;
+    actions =
+      `<button type="button" class="btn btn--primary" data-action="review-queue">${icon('check', 16)} Revisar fila</button>` +
+      `<a class="btn btn--ghost" href="#/documentos">Ver documentos</a>`;
+  } else if (!docs.length) {
     title = 'O arquivo está aberto, mas ainda sem documentos.';
     lead = `Os critérios já existem (${crit.length}). Importe os documentos e o SCAD cria automaticamente ${crit.length} verificação${crit.length === 1 ? '' : 'ões'} para cada arquivo.`;
     actions =
@@ -167,6 +186,19 @@ export function renderDashboard(state) {
     }) +
     `</div>`;
 
+  const reviewStrip =
+    s.reviewAwaiting || s.reviewAttention || s.reviewApproved
+      ? `<div class="review-strip">` +
+        `<span class="review-strip__label">Revisão</span>` +
+        `<a class="review-strip__link" href="#/documentos" data-action="review-filter" data-filter="awaiting">` +
+        `Aguardando revisão <b>${fmtInt(s.reviewAwaiting)}</b></a>` +
+        `<span class="review-strip__sep" aria-hidden="true">·</span>` +
+        `<a class="review-strip__link" href="#/documentos" data-action="review-filter" data-filter="attention">` +
+        `Atenção <b>${fmtInt(s.reviewAttention)}</b></a>` +
+        `<span class="review-strip__ok">Aprovados <b>${fmtInt(s.reviewApproved)}</b></span>` +
+        `</div>`
+      : '';
+
   let matrixBody;
   if (!docs.length) {
     matrixBody =
@@ -196,6 +228,16 @@ export function renderDashboard(state) {
       .map((doc, index) => {
         const st = docStats(state, doc.id);
         const inactive = doc.active === false;
+        const review = reviewOfDoc(state, doc.id);
+        const statusText = inactive
+          ? 'Inativo'
+          : review.status === 'approved'
+            ? 'Aprovado'
+            : review.status === 'attention'
+              ? 'Atenção'
+              : review.status === 'awaiting'
+                ? 'Revisão'
+                : `${st.done}/${st.total}`;
         const cells = inactive
           ? crit
               .map(
@@ -225,7 +267,9 @@ export function renderDashboard(state) {
           `<span class="matrix__num">${String(index + 1).padStart(2, '0')}</span>` +
           `<span class="matrix__name">${esc(doc.name)}</span></a></td>` +
           cells +
-          `<td class="matrix__status"><span>${inactive ? 'Inativo' : `${st.done}/${st.total}`}</span></td>` +
+          `<td class="matrix__status"><span class="matrix__status-text matrix__status-text--${esc(
+            review.status
+          )}">${esc(statusText)}</span></td>` +
           `</tr>`
         );
       })
@@ -310,6 +354,7 @@ export function renderDashboard(state) {
     `<div class="view view--dashboard">` +
     hero +
     metrics +
+    reviewStrip +
     matrix +
     lower +
     `</div>`

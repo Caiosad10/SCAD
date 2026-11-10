@@ -29,7 +29,21 @@ Um caderno de trabalho local para **organizar coleções e processos, importar d
 - **Barra que se expande**: ao entrar num processo a cápsula cresce de ~52% até o tamanho final em ~0,7 s, com os ícones surgindo em cascata e a pílula do item ativo já no lugar.
 - **Reabertura instantânea**: o estado (e um espelho no `localStorage`) é guardado no navegador; na recarga a tela aparece antes da resposta do servidor e a tela de carregamento só surge se a abertura demorar mais de ~220 ms — em recargas normais ela **não pisca**.
 - **Sessão restaurada**: rota, filtros de documentos/apontamentos, escopo da fila (Pendentes/Todos) e rolagem voltam exatamente como estavam ao reabrir o app.
-- **Cabeçalho sem repetição**: “Voltar para processos” (com o nome da coleção no `title`), sobrancelha com a tela atual e título apenas com o nome do processo.
+- **Cabeçalho sem repetição**: “Voltar para processos” (com o nome da coleção no `title`), sobrancelha com a tela atual e título no formato **`ISO 9001:2015 - DC`** — coleção e processo sempre visíveis.
+- **Painel em cascata**: os blocos do painel entram em sequência a cada troca de tela (sem reanimar quando você salva uma verificação).
+
+### Revisão (Fase B)
+
+- **Diogenes revisa**: no documento concluído ele usa **Aprovar documento** (mensagem opcional) ou **Sinalizar critério** (mensagem obrigatória). Ao sinalizar, os demais critérios avaliados são aprovados automaticamente e o documento fica em **Atenção**.
+- Documento com sinalização aberta **não pode ser aprovado**; o Sergio corrige o resultado ou a nota e o critério volta para **Aguardando revisão**.
+- Verificação feita pelo próprio revisor já nasce **aprovada**. Documentos concluídos antes da revisão entram como “Aguardando revisão” na migração.
+- O revisor tem **fila “Revisão”** na bancada, faixa de revisão no painel e filtro “Revisão” na lista de documentos; cada critério mostra `aprovada`, `sinalizada` e a mensagem de quem sinalizou.
+- Tudo fica no histórico por verificação (autor, mensagem, data) e sai no CSV com as colunas de revisão.
+
+### Presença
+
+- Enquanto você está num documento, a outra pessoa vê **“Sergio está aqui”** / **“Diogenes está aqui”** embaixo do nome do arquivo — um aviso discreto para não editarem o mesmo documento ao mesmo tempo.
+- Funciona por batimento de 12 s (expira em 45 s ao sair) e não grava nada no banco.
 - **Matriz de verificação** com colunas uniformes, nomes de critério em duas linhas, ícones maiores e fundo tingido por estado. O wrapper que faltava para aplicar o CSS da tabela foi corrigido.
 - **Cards de métrica clicáveis**: Documentos, Não conformes (abre apontamentos já filtrados) e Observações (idem). “Verificações” é apenas indicador.
 - **Fluxo de verificação contínuo**: ao marcar Não conforme/Observação a nota recebe o foco (sem recarregar a linha), e cada critério tem um atalho “Próximo critério” que rola e foca o seguinte sem sair do documento.
