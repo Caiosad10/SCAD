@@ -198,6 +198,8 @@ Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
 - Nenhuma alteração foi feita em `data/` nem no processo 4177.
 
 **Deploy (pendente de confirmação explícita)**
+- **Prévia v2 isolada para validação:** `http://192.168.56.211:4191` (ou `http://localhost:4191`). Usa uma **cópia migrada** da produção; alterações ali não afetam a produção.
+- Produção v1 continua em `http://192.168.56.211:4177` até a janela.
 1. Nova cópia de segurança de `data/db.json` + `data/files` + código v1 (tag `v1.0`).
 2. Parar o servidor 4177, fazer merge de `fase-a` em `master`, iniciar v2; a migração roda sozinha com backup em `data/backups`.
 3. Validar `/api/state` (41/246/6), abrir o app, conferir login/perfil e um check; se falhar, restaurar tag `v1.0` + backup e reiniciar.
