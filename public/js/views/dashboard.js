@@ -298,7 +298,7 @@ export function renderDashboard(state) {
     const cols =
       `<colgroup><col style="width:26%">` +
       crit.map(() => '<col>').join('') +
-      `<col style="width:64px"></colgroup>`;
+      `<col style="width:72px"></colgroup>`;
 
     const rows = docs
       .map((doc, index) => {
@@ -352,7 +352,7 @@ export function renderDashboard(state) {
       })
       .join('');
 
-    const minWidth = 230 + crit.length * 86 + 58;
+    const minWidth = 230 + crit.length * 86 + 66;
     matrixBody =
       `<div class="matrix__scroll matrix"><table style="min-width:${minWidth}px">${cols}${head}<tbody>${rows}</tbody></table></div>` +
       `<div class="matrix__legend">` +

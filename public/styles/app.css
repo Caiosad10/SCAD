@@ -1143,8 +1143,10 @@ p {
 }
 
 .matrix thead th.is-status {
-  padding-right: 14px;
-  text-align: right;
+  padding-left: 6px;
+  padding-right: 10px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .matrix__code {
@@ -1281,18 +1283,17 @@ p {
 }
 
 .matrix__status {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 0 12px;
+  padding: 0 6px;
   white-space: nowrap;
+  text-align: center;
 }
 
-.matrix__status span {
+.matrix__status-count {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
   color: var(--muted);
-  letter-spacing: 0.03em;
 }
 
 .matrix__legend {
@@ -4539,18 +4540,6 @@ body.nav-hidden .content {
 }
 
 /* Coluna “Situação”: só o ícone nos estados de revisão; contagem nas demais */
-.matrix__status {
-  white-space: nowrap;
-  text-align: center;
-}
-
-.matrix__status-count {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
-
 .matrix__smark {
   display: inline-flex;
   align-items: center;
