@@ -43,15 +43,26 @@ function reviewPill({ tone, iconName, label, hint, count, filter }) {
 function reviewMark(review, inactive) {
   if (inactive) return '';
   if (review.status === 'approved') {
-    return `<span class="matrix__smark matrix__smark--ok" title="Aprovado na revisão">${icon('check', 15)}</span>`;
+    return `<span class="matrix__smark matrix__smark--ok" title="Aprovado na revisão">${icon('check', 16)}</span>`;
   }
   if (review.status === 'attention') {
-    return `<span class="matrix__smark matrix__smark--nc" title="Atenção: sinalização para o analista corrigir">${icon('alert', 15)}</span>`;
+    return `<span class="matrix__smark matrix__smark--nc" title="Atenção: sinalização para o analista corrigir">${icon('alert', 16)}</span>`;
   }
   if (review.status === 'awaiting') {
-    return `<span class="matrix__smark matrix__smark--rev" title="Aguardando revisão">${icon('glasses', 15)}</span>`;
+    return `<span class="matrix__smark matrix__smark--rev" title="Aguardando revisão">${icon('glasses', 16)}</span>`;
   }
   return '';
+}
+
+/**
+ * Coluna “Situação”: aprovado, aguardando revisão e atenção mostram **só o
+ * ícone**; nas demais linhas aparece a contagem de verificações (ou “—” se o
+ * documento está inativo).
+ */
+function statusCell(review, inactive, st) {
+  const mark = reviewMark(review, inactive);
+  if (mark) return mark;
+  return `<span class="matrix__status-count">${inactive ? '—' : `${st.done}/${st.total}`}</span>`;
 }
 
 function metric({ label, value, unit = '', sub = '', mark = '', tone = '', href = '', action = '', filter = '' }) {
@@ -287,7 +298,7 @@ export function renderDashboard(state) {
     const cols =
       `<colgroup><col style="width:26%">` +
       crit.map(() => '<col>').join('') +
-      `<col style="width:84px"></colgroup>`;
+      `<col style="width:64px"></colgroup>`;
 
     const rows = docs
       .map((doc, index) => {
@@ -334,15 +345,14 @@ export function renderDashboard(state) {
           `<p class="matrix__presence" data-presence="${doc.id}">${presenceLine(doc.id)}</p></td>` +
           cells +
           `<td class="matrix__status" aria-label="Situação: ${esc(statusLabel)}">` +
-          `<span class="matrix__status-count">${inactive ? '—' : `${st.done}/${st.total}`}</span>` +
-          reviewMark(review, inactive) +
+          statusCell(review, inactive, st) +
           `</td>` +
           `</tr>`
         );
       })
       .join('');
 
-    const minWidth = 230 + crit.length * 86 + 78;
+    const minWidth = 230 + crit.length * 86 + 58;
     matrixBody =
       `<div class="matrix__scroll matrix"><table style="min-width:${minWidth}px">${cols}${head}<tbody>${rows}</tbody></table></div>` +
       `<div class="matrix__legend">` +

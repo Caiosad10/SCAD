@@ -245,20 +245,28 @@ check('Sergio vê "Diogenes está aqui" na matriz', /Diogenes est[áa] aqui/i.te
 check('só a linha ocupada mostra presença', matrixPresence.visible === 1, JSON.stringify(matrixPresence));
 await shot('qa-presenca-matriz');
 
-// coluna Situação: contagem + ícone, sem texto longo
+// coluna Situação: ícone sozinho nos estados de revisão; contagem nas demais
 const statusCells = await evaluate(`(() => {
   const cells = [...document.querySelectorAll('.matrix__status')];
+  const rows = cells.map((cell) => ({
+    icon: Boolean(cell.querySelector('.matrix__smark svg')),
+    count: (cell.querySelector('.matrix__status-count')?.textContent || '').trim()
+  }));
   return {
     total: cells.length,
-    withCount: cells.filter((cell) => /^\\d+\\/\\d+$/.test(cell.querySelector('.matrix__status-count')?.textContent?.trim() || '')).length,
-    withIcon: cells.filter((cell) => Boolean(cell.querySelector('.matrix__smark svg'))).length,
+    withIcon: rows.filter((row) => row.icon).length,
+    withCount: rows.filter((row) => row.count).length,
+    both: rows.filter((row) => row.icon && row.count).length,
+    neither: rows.filter((row) => !row.icon && !row.count).length,
     longText: cells.filter((cell) => (cell.textContent || '').trim().length > 12).length,
     legend: Boolean(document.querySelector('.matrix__legend--review'))
   };
 })()`);
 console.log('coluna situação:', JSON.stringify(statusCells));
-check('situação mostra contagem em todas as linhas', statusCells.withCount === statusCells.total, JSON.stringify(statusCells));
-check('situação usa ícones para os novos estados', statusCells.withIcon > 0, JSON.stringify(statusCells));
+check('situação usa ícone sozinho nos estados de revisão', statusCells.both === 0, JSON.stringify(statusCells));
+check('todas as linhas têm ícone ou contagem', statusCells.neither === 0, JSON.stringify(statusCells));
+check('há ícones de situação na matriz', statusCells.withIcon > 0, JSON.stringify(statusCells));
+check('contagem nas linhas em análise', statusCells.withCount > 0, JSON.stringify(statusCells));
 check('situação sem texto longo quebrando linha', statusCells.longText === 0, JSON.stringify(statusCells));
 check('legenda explica os ícones de situação', statusCells.legend);
 

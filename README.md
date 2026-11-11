@@ -38,8 +38,8 @@ Um caderno de trabalho local para **organizar coleções e processos, importar d
 - Documento com sinalização aberta **não pode ser aprovado**; o Sergio corrige o resultado ou a nota e o critério volta para **Aguardando revisão**.
 - Verificação feita pelo próprio revisor já nasce **aprovada**. Documentos concluídos antes da revisão entram como “Aguardando revisão” na migração.
 - O revisor tem **fila “Revisão”** na bancada, a **faixa de revisão** no painel e filtros na lista de documentos; cada critério mostra `aprovada`, `sinalizada` e a mensagem de quem sinalizou.
-- **Faixa de revisão com papel definido**: “Revisão” aparece grifado e cada contador é um atalho clicável com ícone, número e seta — 👓 **Aguardando revisão** (só o revisor vê), ⚠ **Atenção** (só o analista vê, para corrigir) e ✓ **Aprovados** (abre a lista só com os aprovados).
-- **Coluna “Situação” da matriz**: continua mostrando `verificadas/total` e os novos estados aparecem como ícone — 👓 aguardando revisão, ⚠ atenção, ✓ aprovado — com legenda própria. Nada de texto longo quebrando a linha.
+- **Faixa de revisão com papel definido**: “Revisão” aparece com marca-texto cobrindo a palavra inteira e cada contador é um atalho clicável com ícone, número e seta — 👓 **Aguardando revisão** (só o revisor vê), ⚠ **Atenção** (só o analista vê, para corrigir) e ✓ **Aprovados** (abre a lista só com os aprovados).
+- **Coluna “Situação” da matriz**: quando o documento está **aprovado, aguardando revisão ou em atenção**, aparece **apenas o ícone** (👓 ⚠ ✓). Nas demais linhas fica a contagem `verificadas/total` (ou “—” para inativo), para saber se tudo foi preenchido. Legenda própria abaixo da matriz.
 - Tudo fica no histórico por verificação (autor, mensagem, data) e sai no CSV com as colunas de revisão.
 
 ### Presença

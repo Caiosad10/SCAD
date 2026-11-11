@@ -4419,18 +4419,22 @@ body.nav-hidden .content {
   background: var(--card);
 }
 
-/* “Revisão” grifado, como um marca-texto sobre o rótulo */
+/* “Revisão” grifado: marca-texto cobrindo a palavra inteira (largura e altura) */
 .review-strip__label {
   flex: none;
-  padding: 2px 7px 3px;
+  display: inline-block;
+  padding: 3px 8px;
   font-family: var(--font-mono);
   font-size: 9.5px;
   font-weight: 700;
-  letter-spacing: 0.16em;
+  line-height: 1.5;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-2);
-  background: linear-gradient(180deg, transparent 46%, rgba(198, 158, 46, 0.42) 46%);
-  border-radius: 2px;
+  color: var(--ink);
+  background: rgba(206, 168, 60, 0.46);
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .review-strip__links {
@@ -4534,13 +4538,13 @@ body.nav-hidden .content {
   color: var(--ok);
 }
 
-/* Coluna “Situação”: contagem de verificações + ícone do estado novo */
+/* Coluna “Situação”: só o ícone nos estados de revisão; contagem nas demais */
 .matrix__status {
   white-space: nowrap;
+  text-align: center;
 }
 
 .matrix__status-count {
-  display: block;
   font-family: var(--font-mono);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -4551,7 +4555,7 @@ body.nav-hidden .content {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-top: 3px;
+  vertical-align: middle;
 }
 
 .matrix__smark--rev {
