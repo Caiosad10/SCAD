@@ -248,11 +248,16 @@ Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
 
 ## 9. Versionamento
 
-- Repositório remoto: `https://github.com/Caiosad10/SCAD.git` — **publicado**: branch `master` (v1, `881e4fb`), branch `fase-a` (v2) e tags `v1.0`, `v2.0-rc1`, `v2.0-rc2`, `v2.0-rc3`.
+- Repositório remoto: `https://github.com/Caiosad10/SCAD.git` — **publicado**: branch `master` (v1 `881e4fb` → v2 mesclada), branch `fase-a` (`a780765`) e tags `v1.0`, `v2.0-rc1` … `v2.0-rc6`, `v2.0`.
+- **v2.0 EM PRODUÇÃO** desde **2026-11-10 20:36** (merge `--ff-only` de `fase-a` em `master`, commit `a780765`, tag `v2.0`).
+  - Migração automática v1 → v2 executada no start: `schemaVersion` 1 → 2, rev 255 → **256**.
+  - Backup **anterior** ao deploy: `backups/2026-11-10_20-36-07/` (db.json rev 255 + 41 arquivos).
+  - Backup **pré-migração** automático do servidor: `data/backups/db-v1-2026-11-11T00-36-43-397Z.json`.
+  - Conferência de integridade: 41 documentos, 246 verificações e 6 critérios **idênticos** ao backup (id, situação e notas conferidos um a um); atividade 85 → 86 (só a entrada “Migração para schema v2”).
 - Estado **v1.0** (produção antes da Fase A): commit `294b890`, tag `v1.0`.
-- Bundles locais de segurança: `backups/scad-v1.0.bundle` e `backups/scad-v2.0-rc3.bundle`.
+- Bundles locais de segurança: `backups/scad-v1.0.bundle` e `scad-v2.0-rc6.bundle`.
 - `data/`, `backups/` e cópias de QA ficam fora do Git.
-- A Fase A/B fica na branch `fase-a`, testada em cópia e só então é mesclada em `master` com nova tag (`v2.0`).
+- **Rollback** (se necessário): parar o servidor, `git checkout v1.0` em `scad`, restaurar `data/db.json` + `data/files` de `backups/2026-11-10_20-36-07/`, subir de novo.
 
 ## 10. Protocolo de alteração em produção
 
@@ -263,6 +268,7 @@ Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
 5. Mudanças somente de interface são publicadas em `public/` sem reiniciar; mudanças de servidor/schema exigem janela curta e reinício.
 6. Em caso de falha: restaurar backup e versão anterior do servidor.
 7. Registrar toda decisão neste arquivo e no quadro Kanban.
+8. **A partir da v2 em produção**: correções e adições seguem o mesmo rito — branch `fase-a`, validação em cópia isolada (porta separada, `SCAD_DATA` próprio), teste de leitura na produção antes de encerrar.
 
 ---
 
@@ -280,6 +286,7 @@ Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
 | 2026-11-10 | Fase B no `fase-a` (v2.0-rc3): revisão por documento com aprovação em bloco e sinalização por critério (mensagem obrigatória), autoaprovação do revisor, devolução automática do check alterado pelo analista, bloqueio de aprovação com sinalização aberta, histórico da revisão, filtros “Revisão”/“Aguardando”/“Atenção”, faixa de revisão no painel, títulos `${coleção} - ${processo}`, cascata do painel e presença “Fulano está aqui”. 24 testes de API e 19 de interface passando. |
 | 2026-11-10 | Ajustes de leitura (v2.0-rc4): faixa “Revisão” grifada com atalhos clicáveis (ícone + contador + seta), separação por papel (revisor = Aguardando revisão; analista = Atenção) e “Aprovados” clicável com filtro próprio; coluna “Situação” da matriz com ícones (👓 ⚠ ✓) mantendo `verificadas/total`; presença movida para a matriz do painel, abaixo do nome do documento, com a linha voltando ao tamanho normal ao sair. 34 verificações de interface e 13 de layout/presença passando. |
 | 2026-11-10 | Refino (v2.0-rc5): marca-texto de “Revisão” passou a cobrir a palavra inteira (cor sólida, largura e altura); na coluna “Situação” os estados aprovado/aguardando revisão/atenção mostram **apenas o ícone**, e a contagem `verificadas/total` fica só nas linhas em análise (ou “—” para inativo). Coluna reduzida para 64 px. Testes rodados em instância isolada (4192) para não mexer na prévia em uso. |
+| 2026-11-11 | **v2.0 EM PRODUÇÃO** (commit `a780765`, tag `v2.0`). Backup `backups/2026-11-10_20-36-07/` + pré-migração automático; merge `--ff-only` de `fase-a` em `master`; migração rev 255 → 256; conferência: 41 documentos, 246 verificações e 6 critérios idênticos ao backup; 4 documentos em “Aguardando revisão”; smoke test no navegador sem erros. Cabeçalho “Situação” corrigido para não quebrar linha (coluna 72 px, `nowrap`). |
 
 ---
 
