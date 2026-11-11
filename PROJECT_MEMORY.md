@@ -241,6 +241,7 @@ Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
 4. Documentos inativos: manter checks suspensos visíveis no detalhe (somente leitura) — confirmar.
 5. Atividade antiga sem autor: exibir como “legado” ou ocultar autor? Manter, sem inventar autoria.
 6. Barra nas telas de coleções/processos: ocultar e animar ao entrar no processo — **confirmado**; expansão ajustada na prática (0,7 s, revisada no iPad).
+7. **Módulo A.P.R:** aguardando o Sergio estudar o fluxo real e a norma aplicável — ver seção 13.1 (está no backlog, sem desenvolvimento).
 
 **Resolvidos:** percentual ponderado por verificações; código 1+2; barra oculta nas listas e expandindo ao entrar no processo; nome da coleção repetido no cabeçalho; recarga do iPad no meio da navegação.
 
@@ -299,3 +300,57 @@ Implementado no worktree `scad-v2` (branch `fase-a`), sem tocar a produção:
 - PDF no iPad pode exigir “Abrir em nova aba”.
 - Sem OCR, anexo de evidência por apontamento ou comparação de versões.
 - Arquivos até ~32 MB por upload.
+
+---
+
+## 13. Ideias registradas no backlog (não implementadas)
+
+Nada desta seção está aprovado para desenvolvimento. Ficam aqui para não se perderem; quando o Sergio decidir, a tarefa sai do **backlog** no quadro Kanban e vira trabalho.
+
+### 13.1 Módulo A.P.R — Análise Preliminar de Risco
+
+**Registrada em:** 2026-11-11 · **Origem:** levantamento do Sergio (SGQ) numa visita de preparação para auditoria.
+
+**Ideia:** reaproveitar a base do SCAD — Coleção → Processo → itens → avaliações → revisão → progresso → exportação — para trabalhar com APR.
+
+**O que já serve (~70% do esqueleto):** coleções e processos, perfis e autoria, histórico de atividade, revisão com aprovar/sinalizar (nome + data), progresso, presença, exportação CSV/JSON e toda a casca visual.
+
+**Onde o modelo atual não encaixa:** o átomo do SCAD é `documento × critério = conforme/não conforme/observação`; o da APR é `perigo × (severidade, probabilidade) = nível de risco`. Faltam:
+
+- etapa da atividade como eixo de agrupamento;
+- escala numérica de severidade e probabilidade + matriz configurável (3×3, 4×4, 5×5) com faixas de classificação;
+- risco inicial **e** risco residual após os controles;
+- plano de ação com responsável e prazo, acompanhado (aberta / em andamento / concluída / atrasada);
+- ranking por risco e filtros (“risco alto”, “ação atrasada”, “sem controle”);
+- layout de impressão de APR com bloco de assinatura;
+- revisão versionada da APR (rev. 00, 01…).
+
+**Três caminhos avaliados:**
+
+| Opção | O que é | Serve para | Custo |
+|---|---|---|---|
+| **A** | Usar como está: `Coleção = A.P.R`, `Processo = APR da atividade`, `Documento = PDF da APR`, `Critérios = requisitos de uma APR bem feita` | **Auditar** APRs de terceiros / antigas (checklist de conformidade) | zero |
+| **B** (recomendada se a CITRA mantiver as APRs) | Processo com `tipo: riscos` + entidade “item de risco” (registro, sem arquivo) + matriz S×P + plano de ação + impressão própria. Reusa revisão, atividade, exportação e **não mexe no fluxo de documentos** | **Produzir e manter** as APRs | módulo novo (schema + 2 telas + exportação) |
+| **C** | Módulo isolado em rota própria | Só se forem universos realmente distintos | alto, pouco reuso |
+
+**Perguntas a responder antes de codificar:**
+
+1. Produzir/gerenciar as APRs da CITRA ou auditar as de terceiros?
+2. Norma/escopo: NR-1/PGR/ISO 45001 (segurança do trabalho) ou ISO 9001 item 6.1 (risco de processo)? Os campos mudam.
+3. Granularidade: atividade, setor, contrato ou cliente?
+4. Escalas 3×3, 4×4 ou 5×5? Faixas de classificação já definidas pela empresa/cliente?
+5. Plano de ação com responsável e prazo acompanhados no SCAD, ou só colunas na APR?
+6. APR revisada (rev. 00, 01…) com histórico e aprovação nominal?
+7. Precisa imprimir em layout de APR com assinatura para a auditoria?
+8. Volume: quantas APRs e quantas linhas por APR?
+
+**Decisão:** o Sergio estuda o fluxo real e a necessidade, e comunica. Só então a tarefa sai do backlog; o primeiro passo técnico será o estudo de schema/telas/exportação, sem tocar na produção.
+
+### 13.2 Acesso e mudança de IP entre redes
+
+**Registrado em:** 2026-11-11 · Não é funcionalidade, é operação.
+
+- O servidor escuta em `0.0.0.0:4177`, portanto responde em **todas** as interfaces ativas. O endereço muda conforme a rede: empresa `192.168.56.211`, celular/hotspot `10.243.213.50`, WSL `172.19.224.1` (este **não** funciona no iPad).
+- Em 11/11 o Diogenes acessou pelo IP antigo porque: o processo ficou no ar desde 10/11 (uptime 14,9 h), o notebook voltou para a rede da empresa e o **DHCP devolveu o mesmo endereço** de antes, e o servidor aceita qualquer interface.
+- **Recomendado:** reserva de DHCP por MAC (ou IP fixo fora da faixa) e/ou nome local (`scad.empresa.local`). Evita link quebrado quando o IP muda.
+- **Melhoria candidata (backlog):** em Ajustes → Acesso no iPad, mostrar apenas os endereços alcançáveis de outro dispositivo (esconder WSL) e oferecer QR code.
