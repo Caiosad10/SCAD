@@ -1564,6 +1564,11 @@ const ACTIONS = {
   'note-toggle': (el) => toggleNote(el.dataset.id),
   'clear-note': (el) => clearNote(el.dataset.id),
   'doc-preview': (el) => openPreview(el.dataset.id),
+  'item-preview': (el) => openItemPreview(el.dataset.id),
+  'evidence-open': (el) => {
+    el.closest('dialog')?.close();
+    openPreview(el.dataset.id);
+  },
   'doc-rename': (el) => renameDoc(el.dataset.id),
   'doc-toggle-active': (el) => toggleDocActive(el.dataset.id),
   'doc-delete': (el) => deleteDoc(el.dataset.id),
@@ -1877,7 +1882,7 @@ function openPreview(docId) {
     body =
       `<div class="preview-fallback">${icon('file', 22)}` +
       `<p>Este documento está no formato antigo do Word (.doc), que o navegador não desenha. ` +
-      `Abra em nova aba ou baixe o arquivo.</p></div>`;
+      `Para ter prévia aqui dentro, importe a versão <b>.docx</b> deste arquivo — ou abra/baixe esta cópia.</p></div>`;
   } else {
     body =
       `<div class="preview-fallback">${icon('file', 22)}` +
@@ -2166,6 +2171,45 @@ async function handleFiles(files, dialog) {
 
 function openEvidencePreview(id) {
   if (id) openPreview(id);
+}
+
+/**
+ * Prévia a partir da listagem: o item não tem arquivo próprio, então abrimos
+ * direto a evidência quando há uma só, ou deixamos escolher quando há várias.
+ */
+function openItemPreview(itemId) {
+  const state = getState();
+  const item = docById(state, itemId);
+  if (!item) return;
+  const evidencias = childDocuments(state, itemId);
+  if (!evidencias.length) {
+    toast('Este item ainda não tem evidência anexada.');
+    return;
+  }
+  if (evidencias.length === 1) {
+    openPreview(evidencias[0].id);
+    return;
+  }
+  openSheet({
+    title: 'Evidências do item',
+    eyebrow: item.name,
+    body:
+      `<p class="sheet__note">${plural(evidencias.length, 'evidência anexada', 'evidências anexadas')} — ` +
+      `escolha qual quer ver.</p>` +
+      `<div class="attach-list">${evidencias
+        .map((ev) => {
+          const kind = fileKind(ev.name, ev.mime);
+          return (
+            `<button type="button" class="evpick" data-action="evidence-open" data-id="${ev.id}">` +
+            `<span class="evpick__main">` +
+            `<span class="evpick__name">${esc(ev.name)}</span>` +
+            `<span class="evpick__meta">${esc(fileKindLabel(kind))} <i>·</i> ${fmtBytes(ev.size)} ` +
+            `<i>·</i> ${esc(fmtDate(ev.addedAt))}</span></span>` +
+            `${icon('external', 16)}</button>`
+          );
+        })
+        .join('')}</div>`,
+  });
 }
 
 /* ------------------------------------------------------------- item dialog */

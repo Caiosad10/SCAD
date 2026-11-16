@@ -149,8 +149,21 @@ export function renderDocumentsList(state) {
             })
             .join('');
 
+      // O arquivo (ou as evidências do item) pode ser visto direto da lista,
+      // sem abrir o documento e sem baixar nada.
+      const previa = isItem
+        ? children.length
+          ? `<button type="button" class="docrow__peek" data-action="item-preview" data-id="${doc.id}" ` +
+            `title="Ver as evidências deste item" aria-label="Ver as evidências de ${esc(doc.name)}">` +
+            `${icon('docs', 15)}</button>`
+          : ''
+        : `<button type="button" class="docrow__peek" data-action="doc-preview" data-id="${doc.id}" ` +
+          `title="Ver o arquivo sem baixar" aria-label="Ver o arquivo ${esc(doc.name)}">` +
+          `${icon('external', 15)}</button>`;
+
       return (
-        `<a class="docrow${inactive ? ' is-inactive' : ''}" href="#/documentos/${doc.id}" data-doc-id="${doc.id}">` +
+        `<div class="docrow${inactive ? ' is-inactive' : ''}" data-doc-id="${doc.id}">` +
+        `<a class="docrow__hit" href="#/documentos/${doc.id}" aria-label="Abrir ${esc(doc.name)}"></a>` +
         `<span class="docrow__index">${String(index + 1).padStart(2, '0')}</span>` +
         `<span class="docrow__icon docrow__icon--${kind}">${isItem ? icon('list', 15) : fileGlyph(kind, 15)}` +
         `<span class="docrow__ext">${esc(isItem ? '#' : fileExt(doc.name))}</span></span>` +
@@ -171,8 +184,10 @@ export function renderDocumentsList(state) {
           { thin: true, label: 'Progresso' }
         )}</span>` +
         `<span class="docrow__stamp">${docStamp(state, doc)}</span>` +
-        `<span class="docrow__go" aria-hidden="true">${icon('chevronRight', 15)}</span>` +
-        `</a>`
+        `<span class="docrow__actions">${previa}` +
+        `<a class="docrow__go" href="#/documentos/${doc.id}" aria-hidden="true" tabindex="-1">${icon('chevronRight', 15)}</a>` +
+        `</span>` +
+        `</div>`
       );
     })
     .join('');

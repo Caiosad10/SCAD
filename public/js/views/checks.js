@@ -88,7 +88,9 @@ function attachmentChipHtml(att, disabled, checkId) {
         'close',
         11
       )}</button>`;
-  return `<span class="evidence-chip" title="${esc(att.name)}">${icon('file', 12)}<span class="evidence-chip__name">${esc(
+  return `<span class="evidence-chip" role="button" tabindex="0" data-action="evidence-open" data-id="${esc(
+    att.id
+  )}" title="Ver ${esc(att.name)} sem baixar">${icon('file', 12)}<span class="evidence-chip__name">${esc(
     att.name
   )}</span>${unlink}</span>`;
 }
