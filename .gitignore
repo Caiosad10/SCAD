@@ -1,11 +1,16 @@
 data/
 data-demo/
 .tmp-data/
+.tmp-servico/
 .demo-files/
 .edge-profile/
 .edge-qa/
 node_modules/
 *.log
+logs/
+
+# gerado pelo instalar-servico-scad.ps1
+scripts/servico.env.cmd
 
 .qa-data/
 .qa-*/
@@ -17,6 +22,3 @@ backups/
 downloads/
 .downloads/
 shots/downloads/
-
-.edge-v2/
-.edge-*/

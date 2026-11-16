@@ -1,56 +1,73 @@
-# Deploy da v2 (Fase A) — runbook
+# Deploy da v2.1 — runbook
 
-Pré-requisito: **confirmação explícita do usuário** para a janela. Produção atual: http://127.0.0.1:4177 (v1, schema 1).
+Estado em 2026-11-16 (antes deste deploy): produção em `scad/`, porta **4177**, versão **2.0.0**, `schemaVersion: 2`, rev **1223** — 1 coleção, 3 processos, 82 documentos, 287 verificações, 9 critérios, 82 arquivos em `data/files` (~10 MB). Servidor rodando como **SYSTEM** (sessão 0), subido pelo Agendador de Tarefas no boot da máquina.
 
-## Antes de parar
+O que muda: código (cascata de exclusão, sem “Apagar tudo”, botão de adicionar em todo estágio, remendos cirúrgicos, confirmação pelo nome) e a versão do servidor para **2.1.0**. **Nenhuma migração de dados** — o banco já está em schema 2 e `normalizeState` só acrescenta campos; o `db.json` não é reescrito no boot.
 
-1. Snapshot de dados e arquivos:
-   ```powershell
-   $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-   New-Item -ItemType Directory -Force -Path "backups\$stamp" | Out-Null
-   Copy-Item "data\db.json" "backups\$stamp\db.json"
-   Copy-Item -Recurse -Force "data\files" "backups\$stamp\files"
-   ```
-2. Confirmar que `scad/` está limpo (`git status`) e que `fase-a` contém os commits da v2.
-3. Avisar que o app ficará indisponível por ~30–60 s.
+## 1. Backup (verificado)
 
-## Deploy
+```powershell
+$stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+New-Item -ItemType Directory -Force -Path "backups\$stamp" | Out-Null
+Copy-Item "data\db.json" "backups\$stamp\db.json"
+Copy-Item -Recurse -Force "data\files" "backups\$stamp\files"
+Get-FileHash "data\db.json" -Algorithm SHA256   # comparar com backups\$stamp\db.json
+```
 
-1. Parar o servidor de produção (job do DSH / `Ctrl+C`).
-2. No diretório de produção `scad/`:
-   ```bash
-   git merge --ff-only fase-a
-   ```
-3. Iniciar:
-   ```bash
-   node server.mjs
-   ```
-   A migração v1→v2 roda no boot e grava `data/backups/db-v1-<timestamp>.json`.
-4. Validar:
-   ```bash
-   curl http://127.0.0.1:4177/api/health
-   curl "http://127.0.0.1:4177/api/state?processId=<pid>"
-   ```
-   Esperado: schema 2, 41 docs, 246 checks, 6 critérios, coleção `ISO 9001:2015`, processo `DC`.
-5. Abrir o app, escolher perfil, conferir um documento e um check. No iPad, recarregar.
+Conferir: mesmo `sha256` do `db.json`, 82 arquivos nos dois lados. O backup de 2026-11-16 (pré-deploy) está em `backups\2026-11-16_11-41-18\` com `sha256.txt` de todos os arquivos.
 
-## Rollback
+## 2. Código
 
-1. Parar o servidor v2.
-2. Restaurar código:
-   ```bash
-   git reset --hard v1.0
-   ```
-3. Restaurar **dados v1** (o backup pré-deploy):
-   ```powershell
-   Copy-Item "backups\<stamp>\db.json" "data\db.json" -Force
-   Copy-Item -Recurse -Force "backups\<stamp>\files\*" "data\files\"
-   ```
-4. Iniciar `node server.mjs` (v1) e validar 41/246/6.
-5. Preservar `data/backups/db-v1-*.json` (cópia adicional da migração).
+O merge já foi feito em `master` (`e810afe`), com tag `v2.1.0`; o estado anterior é a tag `v2.0.0`.
+
+```bash
+git log --oneline -3          # conferir o merge
+git status --short            # deve estar limpo
+```
+
+## 3. Reiniciar o servidor
+
+O processo de produção roda como SYSTEM: só encerra com administrador.
+
+1. Gerenciador de Tarefas → **Detalhes** → `node.exe` (porta 4177) → *Finalizar tarefa* (aceitar a elevação), **ou** reiniciar a máquina (a tarefa de boot sobe o código novo).
+2. Subir de novo: `iniciar-scad.bat` (ou `scripts\servico-scad.cmd`), na pasta `scad\`.
+3. Sem esse passo o servidor antigo continua em memória e só o cliente novo é servido — a criação de itens falharia até o reinício.
+
+## 4. Verificar
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:4177/api/health
+```
+
+Esperado: `version: 2.1.0`, `schemaVersion: 2`, `port: 4177`.
+
+No navegador (`http://127.0.0.1:4177`) e no iPad:
+
+| conferir | esperado |
+|---|---|
+| coleções / processos | 1 / 3 |
+| documentos / critérios | 82 / 9 |
+| verificações | 287 (117 ok, 59 nc, 70 obs, 41 pendentes) |
+| revisões decididas | 6 (5 aprovadas, 1 sinalizada) |
+| Ajustes → “Sobre este programa” | v2.1.0 |
+| Ajustes | só “Excluir este processo”; “Apagar tudo” não existe |
+| sessão de análise | “Importar mais” ao lado da barra de progresso |
+
+Prova de que os dados não foram reescritos: `Get-FileHash data\db.json` deve continuar igual ao backup **até a primeira alteração** feita no app.
+
+## 5. Rollback
+
+```powershell
+# código
+git checkout v2.0.0        # ou: git reset --hard v2.0.0  (com aprovação)
+# dados (só se algo foi perdido; a versão nova tolera os campos antigos e vice-versa)
+Copy-Item "backups\2026-11-16_11-41-18\db.json" "data\db.json" -Force
+Copy-Item -Recurse -Force "backups\2026-11-16_11-41-18\files\*" "data\files\"
+```
+
+Depois reiniciar o servidor. O código antigo preserva campos desconhecidos (`{...registro}`), então voltar a versão **não** estraga um banco já tocado pela v2.1. A única perda não reversível por código é um processo excluído na v2.1 — aí só o backup resolve.
 
 ## Observações
 
-- O código v1.0 está na tag `v1.0`; o bundle está em `backups/scad-v1.0.bundle`.
-- A prévia v2 para validação fica em `http://192.168.56.211:4191`, com cópia isolada; não é produção.
-- Após validar a v2, criar tag `v2.0` e atualizar `PROJECT_MEMORY.md`.
+- `/api/reset` continua existindo no servidor, sem nenhum botão na interface. Não usar em produção.
+- Histórico: a migração v1 → v2 (rev 255 → 256) foi em 2025, com `data/backups/db-v1-*.json` preservado; este runbook substitui o anterior, que descrevia aquela janela.
