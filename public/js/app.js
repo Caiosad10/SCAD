@@ -47,6 +47,7 @@ import {
   markSave,
 } from './ui.js';
 import { icon } from './icons.js';
+import { suportaPreviaDocx, ehDocAntigo, montarPreviaDocx } from './preview.js';
 import { renderOnboarding, chipsHtml, PRESET_LIST } from './views/onboarding.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderDocuments, renderDocumentsList, renderDocument, filterDocuments } from './views/documents.js';
@@ -1853,6 +1854,7 @@ function openPreview(docId) {
   const url = api.fileUrl(doc.stored);
   const kind = isItemDoc(doc) ? 'item' : fileKind(doc.name, doc.mime);
   let body;
+  let montar = null;
   if (kind === 'item') {
     body = `<div class="preview-fallback">${icon('list', 22)}` +
       `<p>Este é um item da listagem — ele reúne as evidências de cada critério. Abra uma evidência para ver o arquivo.</p></div>`;
@@ -1862,12 +1864,26 @@ function openPreview(docId) {
       `<p class="sheet__note">No iPad, se o PDF não aparecer aqui, use “Abrir em nova aba”.</p>`;
   } else if (kind === 'image') {
     body = `<img class="preview-image" src="${url}" alt="${esc(doc.name)}" loading="lazy">`;
+  } else if (suportaPreviaDocx(doc.name)) {
+    // .docx: o próprio navegador desenha o documento (sem passar pelo servidor).
+    body =
+      `<div class="preview-docx" data-docx-host></div>` +
+      `<p class="sheet__note">Prévia montada no seu navegador a partir do arquivo original — o layout pode variar um pouco em relação ao Word, e o arquivo em si não é alterado.</p>`;
+    montar = (dialog) => {
+      const alvo = dialog.querySelector('[data-docx-host]');
+      if (alvo) montarPreviaDocx(alvo, url, { nome: doc.name });
+    };
+  } else if (ehDocAntigo(doc.name)) {
+    body =
+      `<div class="preview-fallback">${icon('file', 22)}` +
+      `<p>Este documento está no formato antigo do Word (.doc), que o navegador não desenha. ` +
+      `Abra em nova aba ou baixe o arquivo.</p></div>`;
   } else {
     body =
       `<div class="preview-fallback">${icon('file', 22)}` +
       `<p>Este formato não tem pré-visualização no navegador. Abra ou baixe o arquivo.</p></div>`;
   }
-  openSheet({
+  const dialog = openSheet({
     title: doc.name,
     eyebrow: `${fileKindLabel(kind)}${kind === 'item' ? '' : ` · ${fmtBytes(doc.size)}`}`,
     body,
@@ -1878,6 +1894,7 @@ function openPreview(docId) {
         : `<a class="btn btn--secondary" href="${url}" target="_blank" rel="noopener">${icon('external', 15)} Abrir em nova aba</a>` +
           `<a class="btn btn--primary" href="${url}?download=1" download>${icon('download', 15)} Baixar</a>`,
   });
+  if (montar) montar(dialog);
 }
 
 function renameDoc(docId) {

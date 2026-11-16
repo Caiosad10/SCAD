@@ -3005,6 +3005,40 @@ p {
   font-size: 13px;
 }
 
+/* prévia de .docx: páginas desenhadas pelo navegador dentro da gaveta */
+
+.preview-docx {
+  min-height: 220px;
+  max-height: min(72dvh, 780px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-sink);
+  -webkit-overflow-scrolling: touch;
+}
+
+.preview-docx .docx-wrapper {
+  padding: 14px;
+  background: transparent;
+}
+
+.preview-docx .docx-wrapper > section.docx {
+  margin: 0 auto 14px;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px rgba(16, 22, 28, 0.16);
+}
+
+.preview-docx .docx-wrapper > section.docx:last-child {
+  margin-bottom: 0;
+}
+
+.preview-loading {
+  padding: 44px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* importação */
 
 .dropzone {
