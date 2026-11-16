@@ -22,7 +22,7 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const PORT = Number(process.env.PORT || process.argv[2] || 4177);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 const MAX_BODY = 48 * 1024 * 1024;
 /* Estados base de check; processos "requirements" adicionam até 2 customizados. */
 
