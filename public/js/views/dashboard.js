@@ -8,7 +8,6 @@ import {
   ring,
   sectionHead,
   fmtBytes,
-  STATUS_LABEL,
 } from '../ui.js';
 import { icon, statusMark } from '../icons.js';
 import {
@@ -19,6 +18,8 @@ import {
   overall,
   reviewOfDoc,
   currentProfile,
+  isRequirementsFlow,
+  statusLabelFor,
 } from '../store.js';
 import { presenceLine } from './checks.js';
 
@@ -85,7 +86,8 @@ function metric({ label, value, unit = '', sub = '', mark = '', tone = '', href 
 export function renderDashboard(state) {
   const s = overall(state);
   const crit = criteriaSorted(state);
-  const docs = state.documents;
+  const requirementsMode = isRequirementsFlow(state);
+  const docs = (state.documents || []).filter((d) => !d.itemId);
   const lastDoc = state.meta.lastDocId ? docById(state, state.meta.lastDocId) : null;
   const continueDoc = lastDoc && docStats(state, lastDoc.id).pending > 0 ? lastDoc : nextPendingDoc(state);
   const complete = s.total > 0 && s.pending === 0;
@@ -98,6 +100,11 @@ export function renderDashboard(state) {
   let lead;
   let actions;
   const reviewer = currentProfile(state)?.role === 'reviewer';
+  // Ação de acrescentar sempre disponível na sessão de análise, qualquer que seja
+  // o estágio: documento → importar mais; listagem → nova linha.
+  const addAction = requirementsMode
+    ? `<button type="button" class="btn btn--ghost" data-action="open-item-dialog">${icon('plus', 15)} Adicionar item</button>`
+    : `<button type="button" class="btn btn--ghost" data-action="open-import">${icon('upload', 15)} Importar mais</button>`;
 
   // Revisor vê o que precisa revisar; analista vê o que precisa corrigir.
   if (reviewer && s.reviewAwaiting) {
@@ -117,13 +124,22 @@ export function renderDashboard(state) {
       `abra o critério sinalizado, ajuste o resultado ou a nota e devolva à revisão.`;
     actions =
       `<button type="button" class="btn btn--primary" data-action="review-queue">${icon('alert', 16)} Ver sinalizações</button>` +
-      `<a class="btn btn--ghost" href="#/documentos">Ver documentos</a>`;
+      `<a class="btn btn--ghost" href="#/documentos">Ver documentos</a>` +
+      addAction;
   } else if (!docs.length) {
-    title = 'O arquivo está aberto, mas ainda sem documentos.';
-    lead = `Os critérios já existem (${crit.length}). Importe os documentos e o SCAD cria automaticamente ${crit.length} verificação${crit.length === 1 ? '' : 'ões'} para cada arquivo.`;
-    actions =
-      `<button type="button" class="btn btn--primary" data-action="open-import">${icon('upload', 16)} Importar documentos</button>` +
-      `<a class="btn btn--ghost" href="#/ajustes">Revisar critérios</a>`;
+    if (requirementsMode) {
+      title = 'O arquivo está aberto, mas ainda sem linhas.';
+      lead = `Os critérios já existem (${crit.length}). Adicione as linhas da listagem e o SCAD cria automaticamente ${crit.length} verificação${crit.length === 1 ? '' : 'ões'} para cada uma.`;
+      actions =
+        `<button type="button" class="btn btn--primary" data-action="open-item-dialog">${icon('plus', 16)} Adicionar itens</button>` +
+        `<a class="btn btn--ghost" href="#/ajustes">Revisar critérios</a>`;
+    } else {
+      title = 'O arquivo está aberto, mas ainda sem documentos.';
+      lead = `Os critérios já existem (${crit.length}). Importe os documentos e o SCAD cria automaticamente ${crit.length} verificação${crit.length === 1 ? '' : 'ões'} para cada arquivo.`;
+      actions =
+        `<button type="button" class="btn btn--primary" data-action="open-import">${icon('upload', 16)} Importar documentos</button>` +
+        `<a class="btn btn--ghost" href="#/ajustes">Revisar critérios</a>`;
+    }
   } else if (complete) {
     title = 'Todas as verificações foram concluídas.';
     lead = s.nc + s.obs
@@ -131,7 +147,8 @@ export function renderDashboard(state) {
       : 'Nenhum apontamento registrado. O processo pode ser encerrado e exportado.';
     actions =
       `<a class="btn btn--primary" href="#/apontamentos">${icon('findings', 16)} Revisar apontamentos</a>` +
-      `<a class="btn btn--ghost" href="#/documentos">Ver documentos</a>`;
+      `<a class="btn btn--ghost" href="#/documentos">Ver documentos</a>` +
+      addAction;
   } else if (started) {
     title = 'A análise está em curso.';
     lead = lastDoc
@@ -141,15 +158,18 @@ export function renderDashboard(state) {
       (continueDoc
         ? `<a class="btn btn--primary" href="#/analisar/${continueDoc.id}">${icon('arrowRight', 16)} Continuar análise</a>`
         : '') +
-      `<a class="btn btn--ghost" href="#/documentos">Ver documentos</a>`;
+      `<a class="btn btn--ghost" href="#/documentos">Ver documentos</a>` +
+      addAction;
   } else {
-    title = 'Tudo pronto para a primeira verificação.';
-    lead = `${countLabel(docs.length, 'documento', 'documentos')} × ${countLabel(crit.length, 'critério', 'critérios')} = ${countLabel(s.total, 'verificação', 'verificações')}. Abra a bancada e comece pelo primeiro documento.`;
+    title = requirementsMode ? 'Tudo pronto para a primeira linha.' : 'Tudo pronto para a primeira verificação.';
+    lead = requirementsMode
+      ? `${countLabel(docs.length, 'linha', 'linhas')} × ${countLabel(crit.length, 'critério', 'critérios')} = ${countLabel(s.total, 'verificação', 'verificações')}. Abra a bancada e comece pela primeira linha.`
+      : `${countLabel(docs.length, 'documento', 'documentos')} × ${countLabel(crit.length, 'critério', 'critérios')} = ${countLabel(s.total, 'verificação', 'verificações')}. Abra a bancada e comece pelo primeiro documento.`;
     actions =
       (continueDoc
         ? `<a class="btn btn--primary" href="#/analisar/${continueDoc.id}">${icon('analyze', 16)} Começar a análise</a>`
         : '') +
-      `<button type="button" class="btn btn--ghost" data-action="open-import">${icon('upload', 15)} Importar mais</button>`;
+      addAction;
   }
 
   const counts = [];
@@ -327,11 +347,12 @@ export function renderDashboard(state) {
               .map((criterion) => {
                 const check = state.checks.find((c) => c.docId === doc.id && c.criterionId === criterion.id);
                 const status = check?.status || 'pending';
-                const label = `${doc.name}, ${criterion.label}: ${STATUS_LABEL[status]}`;
+                const label = `${doc.name}, ${criterion.label}: ${statusLabelFor(state, status)}`;
+                const dotCls = ['pending', 'ok', 'nc', 'obs', 'na'].includes(status) ? status : 'custom';
                 return (
                   `<td><div class="matrix__cellwrap">` +
-                  `<a class="matrix__cell matrix__cell--${status}" href="#/analisar/${doc.id}" ` +
-                  `title="${esc(criterion.label)} — ${esc(STATUS_LABEL[status])}" aria-label="${esc(label)}">` +
+                  `<a class="matrix__cell matrix__cell--${dotCls}" href="#/analisar/${doc.id}" ` +
+                  `title="${esc(criterion.label)} — ${esc(statusLabelFor(state, status))}" aria-label="${esc(label)}">` +
                   `${statusMark(status, 22)}</a>` +
                   `</div></td>`
                 );
@@ -342,6 +363,8 @@ export function renderDashboard(state) {
           `<td class="matrix__doccell"><a class="matrix__doc" href="#/analisar/${doc.id}">` +
           `<span class="matrix__num">${String(index + 1).padStart(2, '0')}</span>` +
           `<span class="matrix__name">${esc(doc.name)}</span></a>` +
+          `<button type="button" class="matrix__del" data-action="doc-delete" data-id="${doc.id}" ` +
+          `aria-label="Excluir linha ${esc(doc.name)}" title="Excluir linha">${icon('trash', 14)}</button>` +
           `<p class="matrix__presence" data-presence="${doc.id}">${presenceLine(doc.id)}</p></td>` +
           cells +
           `<td class="matrix__status" aria-label="Situação: ${esc(statusLabel)}">` +

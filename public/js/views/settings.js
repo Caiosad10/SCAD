@@ -1,6 +1,20 @@
 import { esc, fmtFullDate, plural, stamp } from '../ui.js';
 import { icon } from '../icons.js';
-import { criteriaSorted, overall, ui, currentProfile } from '../store.js';
+import { criteriaSorted, customStatuses, isRequirementsFlow, overall, ui, currentProfile } from '../store.js';
+
+/** Resumo do que sai junto com o processo, sem citar contagens zeradas. */
+function deleteSummary(state, proc) {
+  const contado = (n, um, varios) => (n ? plural(n, um, varios) : '');
+  const partes = [
+    contado(state.documents?.length || 0, 'documento', 'documentos'),
+    contado(state.checks?.length || 0, 'verificação', 'verificações'),
+    contado(state.criteria?.length || 0, 'critério', 'critérios'),
+  ].filter(Boolean);
+  if (!partes.length) return `Remove “${esc(proc.name)}” do SCAD. Não há desfazer.`;
+  const lista =
+    partes.length === 1 ? partes[0] : `${partes.slice(0, -1).join(', ')} e ${partes[partes.length - 1]}`;
+  return `Remove “${esc(proc.name)}” com ${lista}, mais os arquivos enviados. Não há desfazer.`;
+}
 
 function accessList() {
   const health = ui.health;
@@ -60,6 +74,49 @@ export function renderSettings(state) {
 
   const currentUrl = window.location.origin;
 
+  // Status extras só existem no fluxo de listagem (itens). Edição inline,
+  // no mesmo espírito dos critérios; o servidor recusa remover um status
+  // que já está em uso em alguma verificação.
+  const cs = isRequirementsFlow(state) ? customStatuses(state) : [];
+  const csFull = cs.length >= 2;
+  const customStatusesCard = !isRequirementsFlow(state)
+    ? ''
+    : `<section class="card">` +
+      `<div class="section-head"><h2 class="section-head__title">Status personalizados</h2>` +
+      `<span class="section-head__meta">${cs.length} de 2</span></div>` +
+      `<div class="card__body">` +
+      `<p class="field__hint">Resultados extras desta listagem, além de Pendente, Conforme, Não conforme e Observação. ` +
+      `Aparecem nas verificações de cada item.</p>` +
+      (cs.length
+        ? `<div class="cs-list">` +
+          cs
+            .map(
+              (item) =>
+                `<span class="cs-chip"><span>${esc(item.label)}</span>` +
+                `<button type="button" class="cs-chip__x" data-action="cs-settings-remove" data-id="${esc(
+                  item.id
+                )}" aria-label="Remover ${esc(item.label)}">${icon('close', 13)}</button></span>`
+            )
+            .join('') +
+          `</div>`
+        : `<p class="field__hint">Nenhum status personalizado.</p>`) +
+      `<div class="field" data-cs-row hidden><div class="cs-add-row">` +
+      `<input type="text" maxlength="40" data-cs-input placeholder="Nome do status" autocomplete="off">` +
+      `<button type="button" class="iconbtn" data-action="cs-settings-confirm" aria-label="Salvar status">${icon(
+        'check',
+        17
+      )}</button>` +
+      `<button type="button" class="iconbtn" data-action="cs-settings-cancel" aria-label="Cancelar">${icon(
+        'close',
+        17
+      )}</button>` +
+      `</div></div>` +
+      `<button type="button" class="btn btn--ghost btn--sm" data-action="cs-settings-add" ${
+        csFull ? 'hidden' : ''
+      }>${icon('plus', 14)} Adicionar status personalizado</button>` +
+      (csFull ? `<p class="field__hint">Limite de 2 atingido — remova um para trocar.</p>` : '') +
+      `</div></section>`;
+
   return (
     `<div class="page page--settings">` +
     `<div class="page__head"><div class="page__head-copy"><p class="eyebrow">Configuração</p>` +
@@ -111,6 +168,7 @@ export function renderSettings(state) {
       'documentos'
     )}. Ao excluir, as verificações daquele critério também saem.</p>` +
     `</div></section>` +
+    customStatusesCard +
     `</div>` +
     `<div class="settings__col">` +
     `<section class="card">` +
@@ -140,9 +198,11 @@ export function renderSettings(state) {
     `<span>Substitui o estado atual pelo conteúdo do arquivo JSON.</span></div>` +
     `<button type="button" class="btn btn--ghost btn--sm" data-action="restore-backup">Restaurar</button>` +
     `<input type="file" id="restore-input" accept="application/json,.json" class="sr-only"></div>` +
-    `<div class="setting-row"><div class="setting-row__copy"><strong>Reiniciar tudo</strong>` +
-    `<span>Apaga processo, critérios, documentos e arquivos. Não há desfazer.</span></div>` +
-    `<button type="button" class="btn btn--danger btn--sm" data-action="reset-data">Apagar tudo</button></div>` +
+    `<div class="setting-row"><div class="setting-row__copy"><strong>Excluir este processo</strong>` +
+    `<span>${state.process ? deleteSummary(state, proc) : 'Abra o processo que deseja excluir.'}</span></div>` +
+    `<button type="button" class="btn btn--danger btn--sm" data-action="delete-process" ${
+      state.process ? '' : 'disabled'
+    }>Excluir processo</button></div>` +
     `</div></section>` +
     `<section class="card">` +
     `<div class="section-head"><h2 class="section-head__title">Acesso no iPad</h2>` +
@@ -154,8 +214,8 @@ export function renderSettings(state) {
     `Se o iPad não conectar, permita o acesso do Node.js no firewall do Windows.</p>` +
     `</div></section>` +
     `<section class="card">` +
-    `<div class="section-head"><h2 class="section-head__title">Sobre este experimento</h2>` +
-    `<span class="section-head__meta">v0.1</span></div>` +
+    `<div class="section-head"><h2 class="section-head__title">Sobre este programa</h2>` +
+    `<span class="section-head__meta">${ui.health?.version ? `v${ui.health.version}` : 'v2'}</span></div>` +
     `<div class="card__body"><div class="about-list">` +
     `<p><b>Um caderno de análise documental.</b> Documentos, critérios e o resultado de cada verificação — com retomada pelo último documento editado e sincronização entre notebook e iPad pela rede local.</p>` +
     `<p><b>Interface reutilizável.</b> Shell, cabeçalho contextual, cards, stamps de estado, matriz de verificação e barra flutuante em cápsula, conforme o guia do projeto.</p>` +

@@ -22,9 +22,9 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const PORT = Number(process.env.PORT || process.argv[2] || 4177);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const MAX_BODY = 48 * 1024 * 1024;
-const CHECK_STATUSES = new Set(['pending', 'ok', 'nc', 'obs']);
+/* Estados base de check; processos "requirements" adicionam até 2 customizados. */
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -106,14 +106,46 @@ function array(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function normalizeCustomStatuses(value) {
+  const raw = array(value).slice(0, 2);
+  const out = [];
+  const seenLabels = new Set();
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const label = String(item.label ?? '').trim().slice(0, 40);
+    if (label.length < 2) continue;
+    if (seenLabels.has(label.toLowerCase())) continue;
+    seenLabels.add(label.toLowerCase());
+    const id =
+      typeof item.id === 'string' && /^cs_[a-z0-9]{4,}$/.test(item.id)
+        ? item.id
+        : `cs_${crypto.randomBytes(5).toString('hex')}`;
+    out.push({ id, label });
+  }
+  return out;
+}
+
+function processStatuses(process) {
+  const base = ['pending', 'ok', 'nc', 'obs'];
+  if (process?.flow !== 'requirements') return base;
+  return [...base, ...normalizeCustomStatuses(process.customStatuses).map((item) => item.id)];
+}
+
 function normalizeState(input) {
   const base = emptyState();
   const s = input && typeof input === 'object' ? input : {};
   const profiles = array(s.profiles).length ? s.profiles : base.profiles;
+  const processes = array(s.processes).map((process) => ({
+    ...process,
+    flow: process.flow === 'requirements' ? 'requirements' : 'documents',
+    customStatuses: normalizeCustomStatuses(process.customStatuses),
+  }));
   const documents = array(s.documents).map((doc) => ({
     ...doc,
     active: doc.active !== false,
     inactiveReason: typeof doc.inactiveReason === 'string' ? doc.inactiveReason : '',
+    itemKind: doc.itemKind === 'item' ? 'item' : 'document',
+    itemId: doc.itemId && typeof doc.itemId === 'string' ? doc.itemId : null,
   }));
   const meta = s.meta && typeof s.meta === 'object' ? s.meta : {};
   return {
@@ -122,10 +154,14 @@ function normalizeState(input) {
     schemaVersion: 2,
     profiles,
     collections: array(s.collections),
-    processes: array(s.processes),
+    processes,
     criteria: array(s.criteria),
     documents,
-    checks: array(s.checks).map((check) => ({ ...check, review: normalizeReview(check.review) })),
+    checks: array(s.checks).map((check) => ({
+      ...check,
+      review: normalizeReview(check.review),
+      attachments: array(check.attachments).map((id) => String(id)).filter(Boolean),
+    })),
     meta: {
       lastDocByProcess: meta.lastDocByProcess && typeof meta.lastDocByProcess === 'object' ? meta.lastDocByProcess : {},
       lastCheckId: meta.lastCheckId || null,
@@ -696,12 +732,15 @@ async function handleApi(req, res, pathname, url) {
       if (state.processes.some((p) => p.collectionId === collection.id && p.name.toLowerCase() === name.toLowerCase())) {
         throw new HttpError(409, 'Já existe um processo com esse nome nesta coleção.');
       }
+      const flow = body.flow === 'requirements' ? 'requirements' : 'documents';
       const process = {
         id: uid('prc'),
         collectionId: collection.id,
         name,
         code: makeProcessCode(collection.name, name, state.processes),
         description,
+        flow,
+        customStatuses: flow === 'requirements' ? normalizeCustomStatuses(body.customStatuses) : [],
         createdAt: now(),
         updatedAt: now(),
       };
@@ -735,6 +774,27 @@ async function handleApi(req, res, pathname, url) {
         const process = requireProcess(id);
         if (body.name != null) process.name = text(body.name, 120, 'nome do processo');
         if (body.description != null) process.description = optionalText(body.description, 1000, 'descrição');
+        if (body.customStatuses !== undefined && process.flow === 'requirements') {
+          const used = new Set(
+            state.checks
+              .filter((check) => {
+                const doc = findDoc(check.docId);
+                return doc && doc.processId === id;
+              })
+              .map((check) => check.status)
+          );
+          const next = normalizeCustomStatuses(body.customStatuses);
+          const removed = process.customStatuses.filter((item) => !next.some((n) => n.id === item.id));
+          for (const item of removed) {
+            if (used.has(item.id)) {
+              throw new HttpError(
+                409,
+                `O estado “${item.label}” já está em uso em verificações e não pode ser removido. Adapte o rótulo dele ou altere as verificações antes.`
+              );
+            }
+          }
+          process.customStatuses = next;
+        }
         process.updatedAt = now();
         log(`Processo atualizado: ${process.name}`, { processId: id });
         return { rev: state.rev, state: scopedState(id) };
@@ -742,18 +802,51 @@ async function handleApi(req, res, pathname, url) {
       return sendJson(res, 200, result);
     }
     if (method === 'DELETE') {
+      let doomed = [];
+      let removed = { documents: 0, checks: 0, criteria: 0 };
       const result = await mutate(() => {
         const process = requireProcess(id);
-        if (state.documents.some((doc) => doc.processId === id)) {
-          throw new HttpError(409, 'Exclua ou mova os documentos antes de excluir o processo.');
-        }
-        const docs = new Set(state.documents.filter((doc) => doc.processId === id).map((doc) => doc.id));
+        doomed = state.documents.filter((doc) => doc.processId === id);
+        const docIds = new Set(doomed.map((doc) => doc.id));
+        const criteriaIds = new Set(state.criteria.filter((criterion) => criterion.processId === id).map((c) => c.id));
+        removed = {
+          documents: doomed.length,
+          checks: state.checks.filter((check) => docIds.has(check.docId)).length,
+          criteria: criteriaIds.size,
+        };
         state.processes = state.processes.filter((item) => item.id !== id);
         state.criteria = state.criteria.filter((criterion) => criterion.processId !== id);
-        state.checks = state.checks.filter((check) => !docs.has(check.docId));
-        log(`Processo removido: ${process.name}`, { processId: null });
-        return { rev: state.rev, state: scopedState(processFromRequest(req)) };
+        state.documents = state.documents.filter((doc) => doc.processId !== id);
+        state.checks = state.checks.filter((check) => !docIds.has(check.docId));
+        // Evidências de outros processos que apontavam para arquivos daqui perdem o vínculo.
+        if (docIds.size) {
+          state.checks = state.checks.map((check) =>
+            check.attachments?.some((att) => docIds.has(att))
+              ? { ...check, attachments: (check.attachments || []).filter((att) => !docIds.has(att)) }
+              : check
+          );
+        }
+        if (state.meta.lastDocByProcess) delete state.meta.lastDocByProcess[id];
+        if (state.meta.lastCheckId && !state.checks.some((check) => check.id === state.meta.lastCheckId)) {
+          state.meta.lastCheckId = null;
+        }
+        for (const key of [...presence.keys()]) {
+          if (key.startsWith(`${id}:`)) presence.delete(key);
+        }
+        log(
+          `Processo removido: ${process.name} — ${removed.documents} documento(s), ${removed.checks} verificação(ões), ${removed.criteria} critério(s)`,
+          { processId: null }
+        );
+        return { rev: state.rev, state: scopedState(processFromRequest(req)), removed };
       });
+      for (const doc of doomed) {
+        if (!doc.stored) continue;
+        try {
+          await fs.unlink(path.join(FILES_DIR, doc.stored));
+        } catch {
+          /* arquivo já ausente */
+        }
+      }
       return sendJson(res, 200, result);
     }
   }
@@ -766,7 +859,7 @@ async function handleApi(req, res, pathname, url) {
     const result = await mutate(() => {
       const criterion = { id: uid('crit'), processId: process.id, label, hint, order: state.criteria.filter((c) => c.processId === process.id).length };
       state.criteria.push(criterion);
-      for (const doc of state.documents.filter((item) => item.processId === process.id)) {
+      for (const doc of state.documents.filter((item) => item.processId === process.id && !item.itemId)) {
         state.checks.push({
           id: uid('chk'),
           docId: doc.id,
@@ -775,6 +868,7 @@ async function handleApi(req, res, pathname, url) {
           note: '',
           updatedAt: now(),
           authorId: null,
+          attachments: [],
         });
       }
       log(`Critério adicionado: ${label}`, { processId: process.id });
@@ -811,7 +905,7 @@ async function handleApi(req, res, pathname, url) {
         state.criteria.push(copy);
         existing.add(copy.label.toLowerCase());
         created.push(copy);
-        for (const doc of state.documents.filter((item) => item.processId === target.id)) {
+        for (const doc of state.documents.filter((item) => item.processId === target.id && !item.itemId)) {
           state.checks.push({
             id: uid('chk'),
             docId: doc.id,
@@ -820,6 +914,7 @@ async function handleApi(req, res, pathname, url) {
             note: '',
             updatedAt: now(),
             authorId: null,
+            attachments: [],
           });
         }
       }
@@ -881,6 +976,47 @@ async function handleApi(req, res, pathname, url) {
     }
   }
 
+  if (pathname === '/api/items' && method === 'POST') {
+    const body = await readJson(req);
+    const process = requireProcess(body.processId);
+    if (process.flow !== 'requirements') {
+      throw new HttpError(409, 'Itens só podem ser criados em processos de fluxo "requisitos" (listagem).');
+    }
+    const name = text(body.name, 220, 'nome do item');
+    const id = uid('doc');
+    const item = {
+      id,
+      processId: process.id,
+      name,
+      mime: null,
+      size: 0,
+      stored: null,
+      addedAt: now(),
+      active: true,
+      inactiveReason: '',
+      itemKind: 'item',
+      itemId: null,
+    };
+    const result = await mutate(() => {
+      state.documents.push(item);
+      for (const criterion of state.criteria.filter((criterion) => criterion.processId === process.id)) {
+        state.checks.push({
+          id: uid('chk'),
+          docId: item.id,
+          criterionId: criterion.id,
+          status: 'pending',
+          note: '',
+          updatedAt: now(),
+          authorId: null,
+          attachments: [],
+        });
+      }
+      log(`Item criado: ${name}`, { processId: process.id });
+      return { rev: state.rev, state: scopedState(process.id), document: item };
+    });
+    return sendJson(res, 201, result);
+  }
+
   if (pathname === '/api/documents' && method === 'POST') {
     const body = await readJson(req);
     const process = requireProcess(body.processId);
@@ -896,6 +1032,13 @@ async function handleApi(req, res, pathname, url) {
     const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase().replace(/[^.a-z0-9]/g, '').slice(0, 10);
     const id = uid('doc');
     const stored = `${id}${ext ? `.${ext}` : '.bin'}`;
+    let parentItem = null;
+    if (body.itemId != null && body.itemId !== '') {
+      parentItem = findDoc(String(body.itemId));
+      if (!parentItem || parentItem.itemKind !== 'item' || parentItem.processId !== process.id) {
+        throw new HttpError(404, 'Item de destino não encontrado neste processo.');
+      }
+    }
     const doc = {
       id,
       processId: process.id,
@@ -906,6 +1049,8 @@ async function handleApi(req, res, pathname, url) {
       addedAt: now(),
       active: true,
       inactiveReason: '',
+      itemKind: 'document',
+      itemId: parentItem ? parentItem.id : null,
     };
     try {
       await fs.writeFile(path.join(FILES_DIR, stored), buffer);
@@ -914,18 +1059,23 @@ async function handleApi(req, res, pathname, url) {
     }
     const result = await mutate(() => {
       state.documents.push(doc);
-      for (const criterion of state.criteria.filter((item) => item.processId === process.id)) {
-        state.checks.push({
-          id: uid('chk'),
-          docId: doc.id,
-          criterionId: criterion.id,
-          status: 'pending',
-          note: '',
-          updatedAt: now(),
-          authorId: null,
-        });
+      if (!parentItem) {
+        for (const criterion of state.criteria.filter((item) => item.processId === process.id)) {
+          state.checks.push({
+            id: uid('chk'),
+            docId: doc.id,
+            criterionId: criterion.id,
+            status: 'pending',
+            note: '',
+            updatedAt: now(),
+            authorId: null,
+            attachments: [],
+          });
+        }
+        log(`Documento importado: ${name}`, { processId: process.id });
+      } else {
+        log(`Evidência anexada ao item: ${name}`, { processId: process.id });
       }
-      log(`Documento importado: ${name}`, { processId: process.id });
       return { rev: state.rev, state: scopedState(process.id), document: doc };
     });
     return sendJson(res, 201, result);
@@ -962,18 +1112,33 @@ async function handleApi(req, res, pathname, url) {
       return sendJson(res, 200, result);
     }
     if (method === 'DELETE') {
+      const doomed = [doc];
+      if (doc.itemKind === 'item') {
+        doomed.push(...state.documents.filter((item) => item.itemId === doc.id));
+      }
+      const doomedIds = doomed.map((item) => item.id);
       const result = await mutate(() => {
-        state.documents = state.documents.filter((item) => item.id !== id);
-        state.checks = state.checks.filter((check) => check.docId !== id);
+        state.documents = state.documents.filter((item) => !doomedIds.includes(item.id));
+        state.checks = state.checks.filter((check) => !doomedIds.includes(check.docId));
+        state.checks = state.checks.map((check) =>
+          doomedIds.some((id) => check.attachments?.includes(id))
+            ? { ...check, attachments: (check.attachments || []).filter((id) => !doomedIds.includes(id)) }
+            : check
+        );
         const meta = state.meta.lastDocByProcess[doc.processId];
-        if (meta === id) delete state.meta.lastDocByProcess[doc.processId];
-        log(`Documento removido: ${doc.name}`, { processId: doc.processId });
+        if (doomedIds.includes(meta)) delete state.meta.lastDocByProcess[doc.processId];
+        log(doc.itemKind === 'item' ? `Item removido: ${doc.name}` : `Documento removido: ${doc.name}`, {
+          processId: doc.processId,
+        });
         return { rev: state.rev, state: scopedState(doc.processId) };
       });
-      try {
-        await fs.unlink(path.join(FILES_DIR, doc.stored));
-      } catch {
-        /* arquivo já ausente */
+      for (const item of doomed) {
+        if (!item.stored) continue;
+        try {
+          await fs.unlink(path.join(FILES_DIR, item.stored));
+        } catch {
+          /* arquivo já ausente */
+        }
       }
       return sendJson(res, 200, result);
     }
@@ -983,8 +1148,19 @@ async function handleApi(req, res, pathname, url) {
   if (checkIdMatch && method === 'PATCH') {
     const id = decodeURIComponent(checkIdMatch[1]);
     const body = await readJson(req);
-    if (body.status != null && !CHECK_STATUSES.has(body.status)) {
-      throw new HttpError(400, 'Resultado de verificação inválido.');
+    const resolvedAttachments = body.attachments !== undefined ? body.attachments : undefined;
+    if (resolvedAttachments !== undefined) {
+      if (!Array.isArray(resolvedAttachments)) throw new HttpError(400, 'Lista de evidências inválida.');
+      if (resolvedAttachments.length > 12) throw new HttpError(400, 'Máximo de 12 evidências por verificação.');
+    }
+    const status = body.status != null ? String(body.status) : undefined;
+    if (status !== undefined) {
+      const checkRec = state.checks.find((item) => item.id === id);
+      const checkDoc = checkRec ? findDoc(checkRec.docId) : null;
+      const checkProcess = checkDoc ? findProcess(checkDoc.processId) : null;
+      if (!processStatuses(checkProcess).includes(status)) {
+        throw new HttpError(400, 'Resultado de verificação inválido.');
+      }
     }
     const note = body.note != null ? optionalText(body.note, 5000, 'nota') : undefined;
     const result = await mutate(() => {
@@ -996,10 +1172,23 @@ async function handleApi(req, res, pathname, url) {
       const previous = check.status;
       const previousNote = check.note || '';
       if (body.status != null) check.status = body.status;
+      if (body.attachments !== undefined) {
+        const itemDoc = findDoc(check.docId);
+        const ids = [...new Set(resolvedAttachments.map(String))];
+        for (const attId of ids) {
+          const child = findDoc(attId);
+          if (!child) throw new HttpError(404, `Documento de evidência não encontrado (${attId}).`);
+          if (child.itemId !== itemDoc.id) {
+            throw new HttpError(400, 'Uma evidência não pertence ao item deste processo.');
+          }
+        }
+        check.attachments = ids;
+      }
       if (note !== undefined) check.note = note;
       check.updatedAt = now();
       const actor = requestContext.getStore()?.actor;
       if (actor) check.authorId = actor.id;
+      // Anexos não alteram a regra de revisão por enquanto (só status e nota).
       const contentChanged = previous !== check.status || (note !== undefined && note !== previousNote);
       // Revisão: verificação feita pelo revisor é auto-aprovada; alteração do
       // analista em check aprovado/sinalizado devolve o check para a revisão.
@@ -1018,11 +1207,17 @@ async function handleApi(req, res, pathname, url) {
       state.meta.lastCheckId = check.id;
       const criterion = state.criteria.find((item) => item.id === check.criterionId);
       if (body.status != null && previous !== check.status) {
+        const statusProcess = findProcess(doc.processId);
+        const customLabels = (statusProcess?.customStatuses || []).reduce((acc, item) => {
+          acc[item.id] = item.label;
+          return acc;
+        }, {});
         const statusLabels = {
           ok: 'Conforme',
           nc: 'Não conforme',
           obs: 'Observação',
           pending: 'Verificação reaberta',
+          ...customLabels,
         };
         log(`${statusLabels[check.status] || check.status}: ${doc.name} — ${criterion?.label || 'critério'}`, {
           processId: doc.processId,

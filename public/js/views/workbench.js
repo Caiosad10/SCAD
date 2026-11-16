@@ -17,6 +17,9 @@ import {
   reviewOfDoc,
   reviewQueueItems,
   currentProfile,
+  isItemDoc,
+  isRequirementsFlow,
+  childDocuments,
   ui,
 } from '../store.js';
 import { renderChecks, docSummaryHtml } from './checks.js';
@@ -54,20 +57,35 @@ export function resolveWorkbenchDoc(state) {
 
 export function renderWorkbench(state) {
   if (!state.documents.length) {
+    const reqs = isRequirementsFlow(state);
     return (
       `<div class="page">` +
       `<div class="page__head"><div><p class="eyebrow">Bancada de análise</p>` +
-      `<h2 class="page__title">Nada para verificar ainda</h2>` +
-      `<p class="page__sub">A bancada abre o primeiro documento pendente.</p></div></div>` +
-      emptyState({
-        iconName: 'upload',
-        title: 'Importe os documentos do processo',
-        text: 'Cada arquivo recebe uma verificação por critério. Depois é só abrir a bancada e seguir documento por documento.',
-        action: `<button type="button" class="btn btn--primary" data-action="open-import">${icon(
-          'upload',
-          16
-        )} Importar documentos</button>`,
-      }) +
+      `<h2 class="page__title">${reqs ? 'Nenhum item ainda' : 'Nada para verificar ainda'}</h2>` +
+      `<p class="page__sub">${
+        reqs
+          ? 'A listagem começa pelos itens do processo — cada item recebe uma verificação por critério.'
+          : 'A bancada abre o primeiro documento pendente.'
+      }</p></div></div>` +
+      (reqs
+        ? emptyState({
+            iconName: 'list',
+            title: 'Adicione o primeiro item da listagem',
+            text: 'Cada item (uma linha) agrupa os documentos que o comprovam. Depois é só abrir a bancada e seguir item por item.',
+            action: `<button type="button" class="btn btn--primary" data-action="open-item-dialog">${icon(
+              'plus',
+              16
+            )} Adicionar item</button>`,
+          })
+        : emptyState({
+            iconName: 'upload',
+            title: 'Importe os documentos do processo',
+            text: 'Cada arquivo recebe uma verificação por critério. Depois é só abrir a bancada e seguir documento por documento.',
+            action: `<button type="button" class="btn btn--primary" data-action="open-import">${icon(
+              'upload',
+              16
+            )} Importar documentos</button>`,
+          })) +
       `</div>`
     );
   }
@@ -77,7 +95,10 @@ export function renderWorkbench(state) {
   const st = docStats(state, doc.id);
   const flag = docFlag(state, doc.id);
   const index = state.documents.findIndex((d) => d.id === doc.id);
-  const kind = fileKind(doc.name, doc.mime);
+  const isItem = isItemDoc(doc);
+  // Item de listagem não tem arquivo (mime nulo): não passa pelo fileKind.
+  const kind = isItem ? 'item' : fileKind(doc.name, doc.mime);
+  const itemEvidence = isItem ? childDocuments(state, doc.id) : [];
   const s = overall(state);
   const reviewer = currentProfile(state)?.role === 'reviewer';
   const review = reviewOfDoc(state, doc.id);
@@ -152,7 +173,9 @@ export function renderWorkbench(state) {
     `<a class="backlink" href="#/documentos">${icon('arrowLeft', 13)} Documentos</a>` +
     `<div class="doc-head">` +
     `<div class="doc-head__copy">` +
-    `<p class="eyebrow">Bancada · documento ${index + 1} de ${state.documents.length} · ${fileKindLabel(kind)}</p>` +
+    `<p class="eyebrow">Bancada · ${isItem ? 'item' : 'documento'} ${index + 1} de ${state.documents.length} · ${
+      isItem ? `${itemEvidence.length} ${itemEvidence.length === 1 ? 'evidência' : 'evidências'}` : fileKindLabel(kind)
+    }</p>` +
     `<h2 class="doc-head__title">${esc(doc.name)}</h2>` +
     `<p class="page__sub" data-doc-summary>${docSummaryHtml(state, doc)}` +
     (updated ? `<span aria-hidden="true">·</span>última edição ${esc(relTime(updated))}` : '') +
@@ -164,18 +187,19 @@ export function renderWorkbench(state) {
           15
         )} Aprovar documento</button>`
       : '') +
-    `<button type="button" class="btn btn--secondary" data-action="doc-preview" data-id="${doc.id}">${icon(
-      'external',
-      15
-    )} Ver arquivo</button>` +
+    (isItem
+      ? ''
+      : `<button type="button" class="btn btn--secondary" data-action="doc-preview" data-id="${doc.id}">${icon(
+          'external',
+          15
+        )} Ver arquivo</button>`) +
     `<button type="button" class="btn ${doc.active === false ? 'btn--secondary' : 'btn--ghost'}" ` +
     `data-action="doc-toggle-active" data-id="${doc.id}">${icon('power', 15)} ${
       doc.active === false ? 'Reativar' : 'Inativar'
     }</button>` +
-    `<button type="button" class="iconbtn" data-action="doc-rename" data-id="${doc.id}" aria-label="Renomear documento" title="Renomear">${icon(
-      'pen',
-      17
-    )}</button>` +
+    `<button type="button" class="iconbtn" data-action="doc-rename" data-id="${doc.id}" aria-label="${
+      isItem ? 'Renomear item' : 'Renomear documento'
+    }" title="Renomear">${icon('pen', 17)}</button>` +
     `<button type="button" class="iconbtn iconbtn--danger" data-action="doc-delete" data-id="${doc.id}" aria-label="Excluir documento" title="Excluir">${icon(
       'trash',
       17

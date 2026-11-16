@@ -21,8 +21,17 @@ import {
   ui,
   reviewOfDoc,
   currentProfile,
+  isRequirementsFlow,
+  isItemDoc,
+  childDocuments,
+  statusLabelFor,
 } from '../store.js';
 import { renderChecks, docTagHtml } from './checks.js';
+
+/** Lista principal (sem as evidências-filhas presas a um item). */
+export function listableDocuments(state) {
+  return (state?.documents || []).filter((d) => !d.itemId);
+}
 
 const FILTERS = [
   { id: 'all', label: 'Todos' },
@@ -41,15 +50,14 @@ function docStamp(state, doc) {
   if (review.status === 'approved') return stamp('ok', { label: 'Aprovado' });
   if (review.status === 'attention') return stamp('nc', { label: 'Atenção' });
   if (review.status === 'awaiting') return stamp('pending', { label: 'Revisão' });
-  if (st.nc) return stamp('nc', { label: 'Apontamento' });
-  if (st.obs) return stamp('obs', { label: 'Apontamento' });
+  if (st.pointed) return stamp('nc', { label: 'Apontamento' });
   if (st.pending) return stamp('pending', { label: 'Em análise' });
   return stamp('ok', { label: 'Verificado' });
 }
 
 export function filterDocuments(state) {
   const query = ui.docQuery.trim().toLowerCase();
-  return state.documents
+  return listableDocuments(state)
     .map((doc, index) => ({ doc, index }))
     .filter(({ doc }) => {
       if (query && !doc.name.toLowerCase().includes(query)) return false;
@@ -70,8 +78,9 @@ export function filterDocuments(state) {
 }
 
 function filterCounts(state) {
-  const counts = { all: state.documents.length, pending: 0, done: 0, flagged: 0, review: 0, approved: 0, inactive: 0 };
-  for (const doc of state.documents) {
+  const listable = listableDocuments(state);
+  const counts = { all: listable.length, pending: 0, done: 0, flagged: 0, review: 0, approved: 0, inactive: 0 };
+  for (const doc of listable) {
     if (doc.active === false) {
       counts.inactive += 1;
       continue;
@@ -79,7 +88,7 @@ function filterCounts(state) {
     const st = docStats(state, doc.id);
     if (st.pending) counts.pending += 1;
     else counts.done += 1;
-    if (st.nc || st.obs) counts.flagged += 1;
+    if (st.pointed) counts.flagged += 1;
     const review = reviewOfDoc(state, doc.id).status;
     if (review === 'awaiting' || review === 'attention') counts.review += 1;
     if (review === 'approved') counts.approved += 1;
@@ -90,29 +99,40 @@ function filterCounts(state) {
 export function renderDocumentsList(state) {
   const docs = filterDocuments(state);
   const counts = filterCounts(state);
+  const listable = listableDocuments(state);
+  const requirementsMode = isRequirementsFlow(state);
 
-  if (!state.documents.length) {
-    return emptyState({
-      iconName: 'docs',
-      title: 'Nenhum documento importado',
-      text: 'Traga os arquivos deste processo — PDFs, imagens, planilhas ou textos. Cada um recebe uma verificação por critério.',
-      action: `<button type="button" class="btn btn--primary" data-action="open-import">${icon('upload', 16)} Importar documentos</button>`,
-    });
+  if (!listable.length) {
+    return requirementsMode
+      ? emptyState({
+          iconName: 'list',
+          title: 'Nenhuma linha ainda',
+          text: 'Adicione os itens desta lista (ex.: RMC, CASA DO ELETRICISTA) — nome livre — e vincule evidências e verificações.',
+          action: `<button type="button" class="btn btn--primary" data-action="open-item-dialog">${icon('plus', 16)} Adicionar itens</button>`,
+        })
+      : emptyState({
+          iconName: 'docs',
+          title: 'Nenhum documento importado',
+          text: 'Traga os arquivos deste processo — PDFs, imagens, planilhas ou textos. Cada um recebe uma verificação por critério.',
+          action: `<button type="button" class="btn btn--primary" data-action="open-import">${icon('upload', 16)} Importar documentos</button>`,
+        });
   }
 
   if (!docs.length) {
     return emptyState({
       iconName: 'search',
-      title: 'Nenhum documento neste filtro',
-      text: 'Ajuste a busca ou volte para todos os documentos.',
+      title: requirementsMode ? 'Nenhuma linha neste filtro' : 'Nenhum documento neste filtro',
+      text: requirementsMode ? 'Ajuste a busca ou volte para todas as linhas.' : 'Ajuste a busca ou volte para todos os documentos.',
       action: `<button type="button" class="btn btn--secondary" data-action="clear-doc-filters">Limpar busca e filtros</button>`,
     });
   }
 
   const rows = docs
     .map(({ doc, index }) => {
+      const isItem = isItemDoc(doc);
+      const children = isItem ? childDocuments(state, doc.id) : [];
       const st = docStats(state, doc.id);
-      const kind = fileKind(doc.name, doc.mime);
+      const kind = isItem ? 'item' : fileKind(doc.name, doc.mime);
       const inactive = doc.active === false;
       const dots = inactive
         ? criteriaSorted(state)
@@ -123,7 +143,7 @@ export function renderDocumentsList(state) {
               const check = state.checks.find((c) => c.docId === doc.id && c.criterionId === criterion.id);
               const status = check?.status || 'pending';
               return (
-                `<span class="docrow__dot" title="${esc(criterion.label)}: ${esc(status)}">` +
+                `<span class="docrow__dot" title="${esc(criterion.label)}: ${esc(statusLabelFor(state, status))}">` +
                 `${statusMark(status, 13)}</span>`
               );
             })
@@ -132,14 +152,16 @@ export function renderDocumentsList(state) {
       return (
         `<a class="docrow${inactive ? ' is-inactive' : ''}" href="#/documentos/${doc.id}" data-doc-id="${doc.id}">` +
         `<span class="docrow__index">${String(index + 1).padStart(2, '0')}</span>` +
-        `<span class="docrow__icon docrow__icon--${kind}">${fileGlyph(kind, 15)}` +
-        `<span class="docrow__ext">${esc(fileExt(doc.name))}</span></span>` +
+        `<span class="docrow__icon docrow__icon--${kind}">${isItem ? icon('list', 15) : fileGlyph(kind, 15)}` +
+        `<span class="docrow__ext">${esc(isItem ? '#' : fileExt(doc.name))}</span></span>` +
         `<span class="docrow__main">` +
         `<span class="docrow__name">${esc(doc.name)}</span>` +
         `<span class="docrow__meta">${
           inactive
             ? `<b>Inativo</b> <i>·</i> ${esc(doc.inactiveReason || 'sem motivo registrado')}`
-            : `${esc(fileKindLabel(kind))} <i>·</i> ${fmtBytes(doc.size)} <i>·</i> ${st.done}/${st.total} verificações <i>·</i> ${esc(fmtDate(doc.addedAt))}`
+            : isItem
+              ? `Item de listagem <i>·</i> ${children.length} ${children.length === 1 ? 'evidência' : 'evidências'} <i>·</i> ${st.done}/${st.total} verificações <i>·</i> ${esc(fmtDate(doc.addedAt))}`
+              : `${esc(fileKindLabel(kind))} <i>·</i> ${fmtBytes(doc.size)} <i>·</i> ${st.done}/${st.total} verificações <i>·</i> ${esc(fmtDate(doc.addedAt))}`
         }</span>` +
         `</span>` +
         `<span class="docrow__dots" aria-hidden="true">${dots}</span>` +
@@ -174,6 +196,8 @@ export function renderDocuments(state) {
           ? 'Aprovados'
           : null;
 
+  const requirementsMode = isRequirementsFlow(state);
+  const listable = listableDocuments(state);
   const tabs = FILTERS.map(
     (filter) =>
       `<button type="button" data-action="filter-docs" data-filter="${filter.id}" ` +
@@ -189,21 +213,23 @@ export function renderDocuments(state) {
   return (
     `<div class="page page--documents">` +
     `<div class="page__head">` +
-    `<div class="page__head-copy"><p class="eyebrow">Acervo</p>` +
-    `<h2 class="page__title">Documentos</h2>` +
-    `<p class="page__sub">${plural(state.documents.length, 'arquivo', 'arquivos')} ` +
+    `<div class="page__head-copy"><p class="eyebrow">${requirementsMode ? 'Planilha' : 'Acervo'}</p>` +
+    `<h2 class="page__title">${requirementsMode ? 'Itens' : 'Documentos'}</h2>` +
+    `<p class="page__sub">${plural(listable.length, requirementsMode ? 'item' : 'arquivo', requirementsMode ? 'itens' : 'arquivos')} ` +
     `<span aria-hidden="true">·</span> ${plural(s.total, 'verificação', 'verificações')} ` +
     `<span aria-hidden="true">·</span> ${plural(crit.length, 'critério', 'critérios')}</p></div>` +
     `<div class="page__actions">` +
     `<label class="search">${icon('search', 16)}` +
     `<input type="search" data-filter="doc-query" value="${esc(ui.docQuery)}" ` +
-    `placeholder="Buscar documento…" aria-label="Buscar documento"></label>` +
-    `<button type="button" class="btn btn--primary" data-action="open-import">${icon('upload', 16)} Importar</button>` +
+    `placeholder="${requirementsMode ? 'Buscar item…' : 'Buscar documento…'}" aria-label="${requirementsMode ? 'Buscar item' : 'Buscar documento'}"></label>` +
+    (requirementsMode
+      ? `<button type="button" class="btn btn--primary" data-action="open-item-dialog">${icon('plus', 16)} Adicionar itens</button>`
+      : `<button type="button" class="btn btn--primary" data-action="open-import">${icon('upload', 16)} Importar</button>`) +
     `</div></div>` +
-    (state.documents.length
+    (listable.length
       ? `<div class="toolbar">` +
         `<div class="segmented" role="group" aria-label="Filtrar documentos">${tabs}</div>` +
-        `<span class="toolbar__count" id="doc-results">${filterDocuments(state).length} de ${state.documents.length}</span>` +
+        `<span class="toolbar__count" id="doc-results">${filterDocuments(state).length} de ${listable.length}</span>` +
         `</div>`
       : '') +
     filterNote +
@@ -228,20 +254,24 @@ export function renderDocument(state, docId) {
     );
   }
 
-  const index = state.documents.findIndex((d) => d.id === doc.id);
+  const listable = listableDocuments(state);
+  const isItem = isItemDoc(doc);
+  const children = isItem ? childDocuments(state, doc.id) : [];
+  const index = Math.max(0, listable.findIndex((d) => d.id === doc.id));
   const st = docStats(state, doc.id);
-  const kind = fileKind(doc.name, doc.mime);
+  const kind = isItem ? 'item' : fileKind(doc.name, doc.mime);
   const review = reviewOfDoc(state, doc.id);
   const canApprove = currentProfile(state)?.role === 'reviewer' && review.status === 'awaiting';
+  const typeLabel = isItem ? 'Item de listagem' : fileKindLabel(kind);
 
   return (
     `<div class="page page--document">` +
     `<a class="backlink" href="#/documentos">${icon('arrowLeft', 13)} Documentos</a>` +
     `<div class="doc-head">` +
     `<div class="doc-head__copy">` +
-    `<p class="eyebrow">Documento ${index + 1} de ${state.documents.length} · ${fileKindLabel(kind)}</p>` +
+    `<p class="eyebrow">${isItem ? 'Item' : 'Documento'} ${index + 1} de ${listable.length} · ${esc(typeLabel)}</p>` +
     `<h2 class="doc-head__title">${esc(doc.name)}</h2>` +
-    `<p class="page__sub">${fmtBytes(doc.size)} <span aria-hidden="true">·</span> importado em ${esc(
+    `<p class="page__sub">${isItem ? `${children.length} ${children.length === 1 ? 'evidência' : 'evidências'}` : `${fmtBytes(doc.size)}`} <span aria-hidden="true">·</span> importado em ${esc(
       fmtDate(doc.addedAt)
     )} <span aria-hidden="true">·</span> <span data-doc-summary>${
       doc.active === false ? 'Inativo' : `${st.done}/${st.total} verificações`
@@ -258,10 +288,12 @@ export function renderDocument(state, docId) {
       'analyze',
       16
     )} Ir para a bancada</a>` +
-    `<button type="button" class="btn btn--secondary" data-action="doc-preview" data-id="${doc.id}">${icon(
-      'external',
-      15
-    )} Ver arquivo</button>` +
+    (isItem
+      ? ''
+      : `<button type="button" class="btn btn--secondary" data-action="doc-preview" data-id="${doc.id}">${icon(
+          'external',
+          15
+        )} Ver arquivo</button>`) +
     `<button type="button" class="btn ${doc.active === false ? 'btn--secondary' : 'btn--ghost'}" ` +
     `data-action="doc-toggle-active" data-id="${doc.id}">${icon('power', 15)} ${
       doc.active === false ? 'Reativar' : 'Inativar'

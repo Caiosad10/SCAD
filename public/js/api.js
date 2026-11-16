@@ -67,6 +67,7 @@ export const api = {
   copyCriteria: (payload) => request('POST', '/api/criteria/copy', payload),
 
   addDocument: (pid, payload) => request('POST', '/api/documents', { processId: pid, ...payload }),
+  addItem: (pid, payload) => request('POST', '/api/items', { processId: pid, ...payload }),
   updateDocument: (id, payload) => request('PATCH', `/api/documents/${encodeURIComponent(id)}`, payload),
   deleteDocument: (id) => request('DELETE', `/api/documents/${encodeURIComponent(id)}`),
 
