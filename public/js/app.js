@@ -47,7 +47,7 @@ import {
   markSave,
 } from './ui.js';
 import { icon } from './icons.js';
-import { suportaPreviaDocx, ehDocAntigo, montarPreviaDocx } from './preview.js';
+import { suportaPreviaDocx, ehDocAntigo, montarPreviaDocx, montarPreviaDoc } from './preview.js';
 import { renderOnboarding, chipsHtml, PRESET_LIST } from './views/onboarding.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderDocuments, renderDocumentsList, renderDocument, filterDocuments } from './views/documents.js';
@@ -1879,10 +1879,17 @@ function openPreview(docId) {
       if (alvo) montarPreviaDocx(alvo, url, { nome: doc.name });
     };
   } else if (ehDocAntigo(doc.name)) {
+    // .doc: o navegador não desenha este formato, mas o texto é legível —
+    // lemos o próprio arquivo aqui e mostramos o conteúdo (sem layout).
     body =
-      `<div class="preview-fallback">${icon('file', 22)}` +
-      `<p>Este documento está no formato antigo do Word (.doc), que o navegador não desenha. ` +
-      `Para ter prévia aqui dentro, importe a versão <b>.docx</b> deste arquivo — ou abra/baixe esta cópia.</p></div>`;
+      `<div class="preview-doc" data-doc-text-host></div>` +
+      `<p class="sheet__note" data-doc-note>Prévia em <b>texto</b> — o formato .doc não guarda o layout para o navegador. ` +
+      `O texto é o do documento inteiro, na ordem; imagens e tabelas não aparecem como no Word.</p>`;
+    montar = (dialog) => {
+      const alvo = dialog.querySelector('[data-doc-text-host]');
+      const nota = dialog.querySelector('[data-doc-note]');
+      if (alvo) montarPreviaDoc(alvo, url, { nome: doc.name, nota });
+    };
   } else {
     body =
       `<div class="preview-fallback">${icon('file', 22)}` +

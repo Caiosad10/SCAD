@@ -3081,6 +3081,46 @@ p {
   font-size: 13px;
 }
 
+/* prévia de .doc: texto lido do arquivo, numa folha de leitura */
+
+.preview-doc {
+  min-height: 220px;
+  max-height: min(72dvh, 780px);
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-sink);
+  -webkit-overflow-scrolling: touch;
+}
+
+.doc-text__sheet {
+  max-width: 794px;
+  margin: 0 auto;
+  padding: 44px 54px 56px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(16, 22, 28, 0.16);
+  color: #1b1b1a;
+  font-family: ui-serif, Georgia, 'Times New Roman', Times, serif;
+  font-size: 15px;
+  line-height: 1.62;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 8;
+}
+
+@media (max-width: 620px) {
+  .preview-doc {
+    padding: 8px;
+  }
+
+  .doc-text__sheet {
+    padding: 22px 20px 30px;
+    font-size: 14.5px;
+  }
+}
+
 /* importação */
 
 .dropzone {
