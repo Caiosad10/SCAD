@@ -78,12 +78,18 @@ const STATUS_SHAPES = {
     `<path d="M12 3.1 20.9 12 12 20.9 3.1 12 12 3.1Z" fill="currentColor"/><path d="M12 7.4v5.4" fill="none" stroke="${GLYPH}" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.4" r="1.15" fill="${GLYPH}"/>`,
   na:
     '<circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.7" opacity=".8"/><path d="M6.4 17.6 17.6 6.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+  custom:
+    `<circle cx="12" cy="12" r="9" fill="currentColor"/><path d="M12 7.6v5.1" fill="none" stroke="${GLYPH}" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.3" r="1.15" fill="${GLYPH}"/>`,
 };
 
+const KNOWN_MARKS = new Set(['pending', 'ok', 'nc', 'obs', 'na', 'custom']);
+
 export function statusMark(status, size = 16, className = '') {
-  const shape = STATUS_SHAPES[status] || STATUS_SHAPES.pending;
+  const known = KNOWN_MARKS.has(status);
+  const shape = known ? STATUS_SHAPES[status] : STATUS_SHAPES.custom;
+  const cls = known ? status : 'custom';
   return (
-    `<span class="mark mark--${status} ${className}" aria-hidden="true">` +
+    `<span class="mark mark--${cls} ${className}" aria-hidden="true">` +
     `<svg width="${size}" height="${size}" viewBox="0 0 24 24" focusable="false">${shape}</svg></span>`
   );
 }

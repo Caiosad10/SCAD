@@ -354,3 +354,109 @@ Nada desta seção está aprovado para desenvolvimento. Ficam aqui para não se 
 - Em 11/11 o Diogenes acessou pelo IP antigo porque: o processo ficou no ar desde 10/11 (uptime 14,9 h), o notebook voltou para a rede da empresa e o **DHCP devolveu o mesmo endereço** de antes, e o servidor aceita qualquer interface.
 - **Recomendado:** reserva de DHCP por MAC (ou IP fixo fora da faixa) e/ou nome local (`scad.empresa.local`). Evita link quebrado quando o IP muda.
 - **Melhoria candidata (backlog):** em Ajustes → Acesso no iPad, mostrar apenas os endereços alcançáveis de outro dispositivo (esconder WSL) e oferecer QR code.
+
+---
+
+## 14. Fluxo por requisitos/listagem (em validação, fora de produção)
+
+**Estado em 2026-11-16:** implementado no worktree `scad-v2` (branch `fase-a`, servidor de teste na porta **4188**), **não publicado**. A produção em `scad` (`master`, porta 4177) segue intocada — nada desta seção existe lá. Só vai para produção depois da validação do Sergio e de um OK explícito.
+
+**Origem:** necessidade de analisar e avaliar fornecedores/prestadores. No fluxo documental o átomo é “um arquivo, vários critérios”; nesse caso o átomo é **um fornecedor/linha, vários documentos** (alvará, CNPJ, certidões) verificados por critério.
+
+### 14.1 Os dois fluxos
+
+O fluxo é escolhido **na criação do processo** e não muda depois.
+
+| Fluxo | Como funciona |
+|---|---|
+| `documents` (o de sempre) | Importa arquivos → cada arquivo ganha uma verificação por critério → bancada de análise. |
+| `requirements` (listagem) | Cria-se uma **lista de itens** (ex.: “1 - RMC”, “2 - PERSIST SOLUÇÕES”) → cada item ganha uma verificação por critério → os **documentos de evidência** são anexados ao item e vinculados às verificações. A qualificação do item é implícita: vale o que o revisor aprovar. |
+
+### 14.2 Modelo de dados acrescentado (schema v2, aditivo)
+
+| Campo | Onde | Regra |
+|---|---|---|
+| `process.flow` | processo | `documents` (padrão) ou `requirements`. |
+| `process.customStatuses[]` | processo | Até **2** resultados extras (`id: cs_<hex>`, `label` de 2–40 caracteres, sem repetir rótulo). Só vale no fluxo `requirements`; ignorado no documental. |
+| `document.itemKind` | documento | `item` (linha da listagem, sem arquivo) ou `document` (arquivo; também o é no fluxo documental). |
+| `document.itemId` | documento | Item ao qual a evidência pertence. |
+| `check.attachments[]` | verificação | Até 12 ids de documentos de evidência **do mesmo item**. |
+
+Numeração das linhas é automática e recalculada na tela (não fica gravada no nome).
+
+### 14.3 API
+
+- `POST /api/items` `{processId, name}` → cria o item **e** uma verificação por critério do processo.
+- `POST /api/documents` com `itemId` → cria a evidência ligada ao item (o servidor recusa item de outro processo ou que não seja item).
+- `PATCH /api/checks/:id` `{attachments:[…]}` → vincula/desvincula evidências (recusa documento que não seja filho do item).
+- `PATCH /api/processes/:id` `{customStatuses:[{id?,label}]}` → cria, renomeia, remove e reordena. Rótulo sem `id` recebe um `cs_` novo; com `id` válido, preserva (as verificações continuam apontando para ele). Remover um status **em uso** devolve **409** com a explicação (“… já está em uso em verificações …”). Lista maior que 2 é truncada.
+- `POST /api/processes` aceita `flow` e `customStatuses` (criação num passo só) e responde **201**.
+- `DELETE /api/documents/:id` → excluir um **item** apaga em cascata suas evidências, as verificações delas e limpa referências em `attachments`. Excluir um processo com documentos continua bloqueado (409).
+
+### 14.4 Telas
+
+- **Criação do processo:** seletor “Fluxo do processo”; ao escolher listagem aparece o editor de status (até 2), que mostra a linha de digitação só enquanto há espaço e, no limite, troca por um aviso em vez de um campo inútil.
+- **Documentos:** a listagem mostra itens e evidências, com o item identificado como “Item de listagem”.
+- **Bancada do item:** cabeçalho “Bancada · item N de M · X evidências”; cada linha traz os resultados do critério, as evidências vinculadas e o botão “Adicionar item”.
+- **Adicionar itens:** diálogo em forma de compositor de chips — digita e adiciona, numera 01/02/03, ignora repetidos, e tem “Colar lista” para jogar várias linhas de uma vez; o botão do rodapé diz quantos serão criados.
+- **Ajustes → Status personalizados:** cartão com a contagem “N de 2”, remoção por chip (com confirmação) e adição pela mesma linguagem dos critérios. Remover algo em uso é recusado com aviso claro.
+
+### 14.5 Correções de 2026-11-16 (feedback do usuário)
+
+1. **Diálogo de itens** refeito: era uma caixa de texto grande, prática mas fora da estética; agora são chips numerados com colar em lote e rótulo dinâmico.
+2. **“Não foi possível montar a tela” ao clicar no item**: `fileKind()` estourava com mime nulo (`mime.startsWith`), e o item caía no caminho de arquivo. Ficou tolerante a nulo e o item não mostra mais “Ver arquivo”.
+3. **Status na criação**: o atributo `hidden` não funcionava porque `.field`/`.cs-add-row` definem `display:flex` (autor vence a regra do navegador) — o “x” parecia só limpar o campo. Regra global `[hidden]{display:none!important}` e o “x” agora remove o status; no limite de 2 o campo dá lugar ao aviso.
+4. **Tela piscando ao anexar evidência**: o vínculo re-renderizava a página inteira. Agora só o bloco de evidência da verificação é trocado (comparando o HTML antes de substituir), a linha não é recriada e o diálogo continua aberto.
+5. **Status editáveis depois**: antes só existiam na criação; agora há CRUD em Ajustes, com bloqueio de remoção do que está em uso.
+
+### 14.6 Como foi verificado
+
+- `node --check` nos 14 arquivos alterados.
+- Suíte de API: 409 ao remover status em uso, renomear preservando `id`, fluxo documental ignorando `customStatuses`, criação de processo (201), truncamento em 2, remoção e exclusão do processo de teste — sem sobra no banco.
+- Suíte de UI (Chrome headless por CDP, DOM real, na 4188): bancada do item, diálogo de itens (chips, duplicado, remoção, colar em lote, criação real), evidência vinculada/desvinculada **com a mesma linha antes e depois** (prova de que não recria e não pisca), Ajustes (contagem, adicionar/remover, aviso de limite, 409 em uso) e criação de processo (campo de status sumindo no limite).
+- Dados ao final: 4 documentos e 6 verificações no processo de teste, ids e rótulos dos status iguais aos do início; produção com `git status` limpo.
+
+**Pendente:** validação visual do Sergio em `http://localhost:4188`, commit no `fase-a` e, só depois, decisão de deploy.
+
+### 14.7 Ajustes de 2026-11-16 (segunda rodada de feedback)
+
+1. **Botão de adicionar saiu do topo.** O “+ item” do masthead e o “Adicionar item”/“Importar” do cabeçalho da página saíram; agora há um único botão dentro da sessão de análise (`.checks__head`), ao lado da barra de progresso, escolhido pelo fluxo do processo: **“Importar mais”** no fluxo por documentos, **“Adicionar item”** no fluxo por itens. Vale para processos já existentes também. No celular ele passa a ocupar a linha inteira (36 px de altura).
+2. **“Importar mais” continua disponível.** Antes o botão de importar só existia na tela vazia; agora fica sempre visível na sessão de análise, mesmo depois de verificações concluídas.
+3. **Ajustes → Dados e backup ganhou dois cartões separados.**
+   - **“Excluir este processo”**: remove só o processo aberto (critérios e verificações dele), pedindo confirmação com o nome; se houver documentos, recusa com aviso em vez de apagar. Testado ponta a ponta: o processo sai do servidor e os outros continuam.
+   - **“Apagar todos os dados”** (antes “Reiniciar tudo”): o texto agora diz que apaga **todas** as coleções, processos, critérios, documentos, verificações e arquivos, e aponta o caminho certo para remover um só.
+4. **Fim do último redesenho de página.** `removeEvidence()` ainda chamava `renderAll()` quando não recebia `refreshList`; agora atualiza só as linhas e o diálogo. Nenhum caminho de status/anexo reconstrói a página.
+5. **Sincronia de 12 s sem piscar.** Quando outro dispositivo escreve, o estado novo era aplicado com `renderAll()`. Agora, se a estrutura não mudou (mesmos documentos, mesmos critérios, mesmos status personalizados e linhas na tela), o app aplica o estado **linha por linha** (`patchRemoteState`), atualizando cabeçalho, resumo e contadores; só reconstrói quando muda documento/critério.
+6. **Teclado no toque.** Ao marcar “não conforme”/“observação” o campo de nota recebia foco, o que no iPad abre o teclado e parece uma recarga da tela. O foco automático foi desligado em dispositivos de toque (`pointer: coarse`) e sempre usa `preventScroll`.
+
+### 14.8 Verificação da segunda rodada
+
+- Suíte de UI (Chrome headless/CDP, 1280 e 390 px): 18 asserções de comportamento + 20 de layout + 6 de exclusão de processo, todas passando.
+- Medições de “piscar”: clique em status = 16 mutações e **nenhuma** troca de página; vincular/desvincular anexo = 2 mutações; escrita externa + sincronia de 12 s = linha atualizada, página intacta, rolagem preservada.
+- Exclusão real: processo vazio “TESTE VAZIO” criado, excluído pela interface, sumiu da lista e do servidor (5 processos restantes, nenhum outro afetado).
+
+### 14.9 Ajustes de 2026-11-16 (terceira rodada de feedback)
+
+1. **Excluir processo agora apaga tudo dele — em cascata.** Antes o servidor recusava com “Exclua ou mova os documentos antes de excluir o processo”, o que prendia o usuário. `DELETE /api/processes/:id` passou a levar junto, numa única gravação atômica: documentos do processo, verificações, critérios, os arquivos em `data/files/` (apagados depois do commit, em `try/catch`), os `check.attachments` de **outros** processos que apontavam para documentos removidos, `meta.lastDocByProcess[id]`, `meta.lastCheckId` órfão e as chaves de presença `id:…`. A resposta traz `{ rev, state, removed: { documents, checks, criteria } }`.
+2. **“Apagar tudo” saiu do produto.** O cartão “Apagar todos os dados”, a função `resetAll()` e a ação `reset-data` foram removidos. Em Ajustes sobrou só **“Excluir este processo”**, que age apenas no processo aberto (critérios, documentos, verificações e arquivos dele) e diz isso na confirmação: “sai do SCAD com N documento(s), N verificação(ões)… Nenhum outro processo da coleção é afetado. Não há desfazer.” Contagens zeradas são omitidas do texto.
+3. **O botão de adicionar vive na sessão de análise, em qualquer estágio.** Antes ele sumia quando as verificações começavam. Agora aparece na “Sessão de análise” ao lado da barra de progresso em todos os estados do analista (não iniciado, em andamento, concluído, com apontamentos): **“Importar mais”** no fluxo por documentos, **“Adicionar item”** no fluxo por itens. Só não aparece para o revisor, que não adiciona conteúdo.
+4. **Fim do piscar no PC.** O que redesenhava a tela a cada ação era a substituição de nós: `syncAfterCheck()` trocava o cabeçalho da sessão por `outerHTML` (o que reiniciava a transição da barra e dos contadores) e `updateCheckRow()` trocava a linha inteira por `replaceWith`. Agora existem dois “remendos cirúrgicos”:
+   - `patchChecksHead(state, doc)` atualiza `.checks__num` e a barra só quando o HTML muda de fato, respeitando documento inativo;
+   - `patchCheckRow(row, state, check, options)` atualiza classe, `aria-label`, selo, `aria-pressed`, insere/remove o bloco de nota e sincroniza o `<textarea>` **apenas se ele não estiver em edição**; devolve `false` quando a linha é de outro tipo (`data-review`/`data-opts`) e aí sim vale redesenhar.
+   Medido: digitar na observação, marcar status e anexar/remover evidência **não trocam nenhum nó** (0 substituições), então nada pisca nem perde o cursor.
+5. **Foco automático na nota de volta.** O foco ao marcar “não conforme”/“observação” havia sido desligado por causa do iPad; voltou para todos os dispositivos, sempre com `preventScroll: true` (não rola a tela e não reposiciona a página).
+
+### 14.10 Verificação da terceira rodada
+
+- 95 asserções de UI (Chrome headless via CDP, 1600/1280/390 px), todas passando: 27 de comportamento da rodada (`_round3`), 20 da suíte de telas (`_ui2`), 6 de exclusão de processo vazio (`_ui4`), 20 de layout (`_ui5`), 15 de varredura de status/anexo nas três telas (`_sweep`) e 7 de “piscar” (`_flick`).
+- Exclusão em cascata exercitada pela interface com um processo de fixture (“TESTE CASCATA …”) contendo 1 documento real, 2 verificações e 2 critérios: a gaveta mostrou as contagens, o processo sumiu do servidor, o documento e as verificações não sobraram no escopo, o **arquivo foi apagado do disco** e o processo vizinho continuou com seus 1 documento e 2 verificações.
+- Limite conhecido do teste: no Chrome headless a janela não recebe foco do sistema, então `focus()` é ignorado pelo navegador. A asserção verifica que o app **pede** o foco no `textarea` certo (`HTMLElement.prototype.focus` instrumentado); a confirmação visual do cursor fica com o usuário no iPad e no PC.
+- Nada foi commitado nem levado para produção: tudo continua em `scad-v2` (branch `fase-a`) na porta 4188, aguardando validação.
+
+### 14.11 Preparação do deploy da v2.1 (2026-11-16)
+
+1. **Excluir processo pede o nome digitado.** `confirmSheet()` ganhou `requireText`: a gaveta mostra “Para confirmar, escreva **NOME**” e o botão “Excluir processo” nasce desabilitado (`[disabled]`, opacidade 0.45), liberando só quando o texto digitado casa com o nome do processo (comparação sem diferenciar maiúsculas e ignorando espaços nas pontas). Enter confirma quando liberado; digitar o prefixo do nome não libera. Só a exclusão de processo usa o recurso — as outras confirmações (critério, documento, restaurar backup) continuam num clique.
+2. **Versão visível.** `VERSION` do servidor passou de `2.0.0` para **`2.1.0`**, para o `/api/health` provar qual código está no ar. O cartão de Ajustes deixou de dizer “Sobre este experimento · v0.1” e agora diz “Sobre este programa” com a versão lida do próprio servidor (`ui.health.version`).
+3. **Compatibilidade verificada antes do deploy** (produção intocada, rev 1223): o banco de produção **já está em schema 2**, então não há migração no boot; `normalizeState` só acrescenta campos, e o `db.json` não é reescrito no boot (só na primeira alteração). As 40 verificações sem objeto `review` ganham `{status:'pending'}` e isso não altera a fila do revisor, que é por documento e só inclui documento com todas as verificações respondidas. `public/` tem os mesmos 19 arquivos nos dois lados (nenhum arquivo novo ou removido). O cliente tolera `localStorage` de versão anterior (leitura em `try/catch`, com validade de 7 dias).
+4. **Servidor de produção roda como SYSTEM** (sessão 0, `cmd.exe` filho do `svchost` do Agendador de Tarefas), provavelmente por tarefa de boot que não aparece sem elevação. Consequência prática: uma sessão sem elevação **não consegue encerrar** o processo, então a janela de deploy precisa de alguém com administrador (Gerenciador de Tarefas) ou de um reinício da máquina — a tarefa de boot sobe o código novo.
+

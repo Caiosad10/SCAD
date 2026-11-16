@@ -1,6 +1,6 @@
 import { esc, stamp, emptyState, relTime, fmtTime, plural } from '../ui.js';
 import { icon } from '../icons.js';
-import { findings, overall, ui } from '../store.js';
+import { findings, overall, ui, customStatuses, statusLabelFor, isPointedStatus } from '../store.js';
 
 function matchFinding(item, query) {
   if (!query) return true;
@@ -13,27 +13,47 @@ export function filteredFindings(state) {
   return findings(state).filter((item) => {
     if (ui.findFilter === 'nc' && item.check.status !== 'nc') return false;
     if (ui.findFilter === 'obs' && item.check.status !== 'obs') return false;
+    if (
+      ui.findFilter &&
+      ui.findFilter !== 'all' &&
+      ui.findFilter !== 'nc' &&
+      ui.findFilter !== 'obs' &&
+      item.check.status !== ui.findFilter
+    ) {
+      return false;
+    }
     return matchFinding(item, query);
   });
+}
+
+/** Rótulo da severidade do apontamento para filtros e leitura. */
+function findingStamp(state, status) {
+  const label = statusLabelFor(state, status);
+  if (status === 'nc' || status === 'obs') return stamp(status);
+  return stamp('custom', { label });
+}
+
+function countsByStatus(all, state) {
+  const out = { all: all.length, nc: 0, obs: 0 };
+  for (const custom of customStatuses(state)) out[custom.id] = 0;
+  for (const item of all) {
+    out[item.check.status] = (out[item.check.status] || 0) + 1;
+  }
+  return out;
 }
 
 export function renderFindings(state) {
   const all = findings(state);
   const items = filteredFindings(state);
   const s = overall(state);
-  const nc = all.filter((f) => f.check.status === 'nc').length;
-  const obs = all.filter((f) => f.check.status === 'obs').length;
-
-  const groups = new Map();
-  for (const item of items) {
-    if (!groups.has(item.doc.id)) groups.set(item.doc.id, { doc: item.doc, items: [] });
-    groups.get(item.doc.id).items.push(item);
-  }
+  const counts = countsByStatus(all, state);
+  const customs = customStatuses(state);
 
   const filters = [
-    { id: 'all', label: 'Todos', count: nc + obs },
-    { id: 'nc', label: 'Não conformes', count: nc },
-    { id: 'obs', label: 'Observações', count: obs },
+    { id: 'all', label: 'Todos', count: counts.all },
+    { id: 'nc', label: 'Não conformes', count: counts.nc },
+    { id: 'obs', label: 'Observações', count: counts.obs },
+    ...customs.map((custom) => ({ id: custom.id, label: custom.label, count: counts[custom.id] || 0 })),
   ]
     .map(
       (filter) =>
@@ -48,8 +68,7 @@ export function renderFindings(state) {
     `<div class="page__head">` +
     `<div class="page__head-copy"><p class="eyebrow">Registro</p>` +
     `<h2 class="page__title">Apontamentos</h2>` +
-    `<p class="page__sub">${plural(nc, 'não conforme', 'não conformes')} <span aria-hidden="true">·</span> ` +
-    `${plural(obs, 'observação', 'observações')} <span aria-hidden="true">·</span> ${plural(s.docs, 'documento', 'documentos')}</p></div>` +
+    `<p class="page__sub">${all.length} apontamento${all.length === 1 ? '' : 's'} <span aria-hidden="true">·</span> ${plural(s.docs, 'item', 'itens')}</p></div>` +
     `<div class="page__actions">` +
     `<button type="button" class="btn btn--secondary" data-action="export-csv">${icon('download', 15)} Exportar CSV</button>` +
     `<button type="button" class="iconbtn" data-action="print" aria-label="Imprimir apontamentos" title="Imprimir">${icon(
@@ -81,7 +100,7 @@ export function renderFindingsResults(state) {
     return emptyState({
       iconName: 'findings',
       title: 'Nenhum apontamento registrado',
-      text: 'Ao marcar uma verificação como “Não conforme” ou “Observação”, o registro aparece aqui com a nota e o critério.',
+      text: 'Ao marcar uma verificação como “Não conforme”, “Observação” ou outro estado de apontamento (ex.: “Ausente”), o registro aparece aqui com a nota e o critério.',
       action: `<a class="btn btn--secondary" href="#/analisar">${icon('analyze', 16)} Ir para a bancada</a>`,
     });
   }
@@ -108,7 +127,7 @@ export function renderFindingsResults(state) {
           const note = (check.note || '').trim();
           return (
             `<div class="finding">` +
-            `<div>${stamp(check.status)}</div>` +
+            `<div>${findingStamp(state, check.status)}</div>` +
             `<div class="finding__body">` +
             `<p class="finding__crit">${esc(criterion?.label || 'Critério removido')}</p>` +
             `<p class="finding__note${note ? '' : ' is-empty'}">${esc(

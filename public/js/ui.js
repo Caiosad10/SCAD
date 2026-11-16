@@ -84,10 +84,14 @@ export function fileExt(name = '') {
 
 export function fileKind(name = '', mime = '') {
   const ext = (fileExt(name) === 'ARQ' ? '' : fileExt(name)).toLowerCase();
+  // Itens de listagem não têm arquivo: o mime chega nulo. Normalizar evita
+  // que qualquer tela quebre ao abrir um item (fileKind é chamado em vários
+  // pontos, alguns sem saber que o documento é um item).
+  const type = String(mime || '').toLowerCase();
   if (ext === 'pdf') return 'pdf';
-  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'heif'].includes(ext) || mime.startsWith('image/')) return 'image';
-  if (['xls', 'xlsx', 'csv', 'ods'].includes(ext) || mime.includes('spreadsheet')) return 'sheet';
-  if (['doc', 'docx', 'odt', 'txt', 'rtf', 'md'].includes(ext) || mime.includes('word') || mime.startsWith('text/')) return 'doc';
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'heif'].includes(ext) || type.startsWith('image/')) return 'image';
+  if (['xls', 'xlsx', 'csv', 'ods'].includes(ext) || type.includes('spreadsheet')) return 'sheet';
+  if (['doc', 'docx', 'odt', 'txt', 'rtf', 'md'].includes(ext) || type.includes('word') || type.startsWith('text/')) return 'doc';
   return 'file';
 }
 
@@ -99,6 +103,7 @@ export function fileKindLabel(kind) {
       sheet: 'Planilha',
       doc: 'Documento',
       file: 'Arquivo',
+      item: 'Item de listagem',
     }[kind] || 'Arquivo'
   );
 }
@@ -106,7 +111,6 @@ export function fileKindLabel(kind) {
 export function fileGlyph(kind, size = 16) {
   if (kind === 'image') return icon('image', size);
   if (kind === 'sheet') return icon('sheet', size);
-  if (kind === 'pdf') return icon('file', size);
   return icon('file', size);
 }
 
@@ -122,10 +126,13 @@ export const STATUS_LABEL = {
 
 export const STATUS_ORDER = ['ok', 'nc', 'obs'];
 
+const STAMP_CLASSES = new Set(['pending', 'ok', 'nc', 'obs', 'na', 'custom']);
+
 export function stamp(status, options = {}) {
-  const label = options.label || STATUS_LABEL[status] || 'Pendente';
+  const label = options.label || STATUS_LABEL[status] || (STAMP_CLASSES.has(status) ? 'Pendente' : String(status || '').trim() || 'Pendente');
+  const cls = STAMP_CLASSES.has(status) ? status : 'custom';
   const quiet = options.quiet ? ' stamp--quiet' : '';
-  return `<span class="stamp stamp--${status}${quiet}">${statusMark(status, 11)}${esc(label)}</span>`;
+  return `<span class="stamp stamp--${cls}${quiet}">${statusMark(cls, 11)}${esc(label)}</span>`;
 }
 
 export function statusTag(status) {
@@ -228,8 +235,9 @@ export function openSheet({ title, eyebrow = '', body = '', footer = '', wide = 
     if (typeof onClose === 'function') onClose();
   });
 
-  const closeButton = dialog.querySelector('[data-close]');
-  closeButton?.addEventListener('click', () => dialog.close());
+  dialog.querySelectorAll('[data-close]').forEach((btn) =>
+    btn.addEventListener('click', () => dialog.close())
+  );
 
   if (typeof dialog.showModal === 'function') dialog.showModal();
   else dialog.setAttribute('open', '');
@@ -237,13 +245,32 @@ export function openSheet({ title, eyebrow = '', body = '', footer = '', wide = 
   return dialog;
 }
 
-export function confirmSheet({ title, message, confirmLabel = 'Confirmar', danger = false, eyebrow = 'Confirmação' }) {
+/**
+ * Confirmação em gaveta. Com `requireText`, o botão só libera depois que a
+ * pessoa escreve o texto pedido (usado na exclusão de processo, que apaga tudo).
+ */
+export function confirmSheet({
+  title,
+  message,
+  confirmLabel = 'Confirmar',
+  danger = false,
+  eyebrow = 'Confirmação',
+  requireText = '',
+}) {
   return new Promise((resolve) => {
     let settled = false;
+    const need = String(requireText || '').trim();
     const dialog = openSheet({
       title,
       eyebrow,
-      body: `<p class="sheet-message">${message}</p>`,
+      body:
+        `<p class="sheet-message">${message}</p>` +
+        (need
+          ? `<div class="field sheet__confirm"><label for="sheet-confirm-text">` +
+            `Para confirmar, escreva <b>${esc(need)}</b></label>` +
+            `<input type="text" id="sheet-confirm-text" data-confirm-text autocomplete="off" ` +
+            `autocapitalize="off" autocorrect="off" spellcheck="false"></div>`
+          : ''),
       footer:
         `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
         `<button type="button" class="btn ${danger ? 'btn--danger' : 'btn--primary'}" data-confirm>${esc(confirmLabel)}</button>`,
@@ -255,8 +282,26 @@ export function confirmSheet({ title, message, confirmLabel = 'Confirmar', dange
       },
     });
 
+    const confirmBtn = dialog.querySelector('[data-confirm]');
+    const input = dialog.querySelector('[data-confirm-text]');
+    if (need && input && confirmBtn) {
+      const matches = () => input.value.trim().toLowerCase() === need.toLowerCase();
+      confirmBtn.disabled = true;
+      input.addEventListener('input', () => {
+        confirmBtn.disabled = !matches();
+      });
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !confirmBtn.disabled) {
+          event.preventDefault();
+          confirmBtn.click();
+        }
+      });
+      requestAnimationFrame(() => input.focus({ preventScroll: true }));
+    }
+
     dialog.querySelector('[data-cancel]')?.addEventListener('click', () => dialog.close());
-    dialog.querySelector('[data-confirm]')?.addEventListener('click', () => {
+    confirmBtn?.addEventListener('click', () => {
+      if (need && input && input.value.trim().toLowerCase() !== need.toLowerCase()) return;
       settled = true;
       resolve(true);
       dialog.close();

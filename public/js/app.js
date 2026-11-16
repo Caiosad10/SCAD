@@ -22,12 +22,19 @@ import {
   reviewOfDoc,
   reviewQueueItems,
   checkReview,
+  isRequirementsFlow,
+  isItemDoc,
+  childDocuments,
+  customStatuses,
+  statusLabelFor,
+  isPointedStatus,
 } from './store.js';
 import {
   esc,
   fmtBytes,
   fmtInt,
   fmtTime,
+  fmtDate,
   plural,
   toast,
   openSheet,
@@ -37,7 +44,6 @@ import {
   fileKind,
   fileKindLabel,
   stamp,
-  STATUS_LABEL,
   markSave,
 } from './ui.js';
 import { icon } from './icons.js';
@@ -48,7 +54,16 @@ import { renderWorkbench, resolveWorkbenchDoc } from './views/workbench.js';
 import { renderFindings, renderFindingsResults } from './views/findings.js';
 import { renderSettings } from './views/settings.js';
 import { renderCollections, renderCollection } from './views/collections.js';
-import { renderCheckRow, docSummaryHtml, checksHeadHtml, doneBannerHtml, presenceLine } from './views/checks.js';
+import {
+  renderCheckRow,
+  docSummaryHtml,
+  checksHeadHtml,
+  patchChecksHead,
+  patchCheckRow,
+  doneBannerHtml,
+  presenceLine,
+  evidenceBlockHtml,
+} from './views/checks.js';
 
 const NAV = [
   { id: 'dashboard', href: '#/', label: 'Painel', icon: 'panel' },
@@ -589,10 +604,6 @@ function renderMasthead() {
       `<div class="masthead__top">` +
       `<a class="brand" href="#/" aria-label="Ir para o painel">${brandHtml()}</a>` +
       `<div class="masthead__tools">` +
-      `<button type="button" class="btn btn--paper btn--sm" data-action="open-import">${icon(
-        'upload',
-        15
-      )} Importar</button>` +
       `<a class="iconbtn iconbtn--onink" href="#/ajustes" aria-label="Ajustes do processo" title="Ajustes">${icon(
         'settings',
         18
@@ -1062,6 +1073,21 @@ function showNewProcess(collectionId) {
     body:
       `<div class="field"><label for="proc-name">Nome do processo</label>` +
       `<input id="proc-name" type="text" maxlength="120" placeholder="Ex.: POP, DC, Organograma" autocomplete="off"></div>` +
+      `<div class="field"><label for="proc-flow">Fluxo do processo</label>` +
+      `<select id="proc-flow">` +
+      `<option value="documents">Documentos</option>` +
+      `<option value="requirements">Listagem</option>` +
+      `</select></div>` +
+      `<div class="field" id="proc-custom-wrap" hidden><span class="field__label">Status personalizados <span class="field__optional">opcional · até 2</span></span>` +
+      `<div id="cs-list" class="cs-list"></div>` +
+      `<div id="cs-add-row" class="cs-add-row" hidden>` +
+      `<input id="cs-input" type="text" class="input" maxlength="40" placeholder="Nome do status" autocomplete="off">` +
+      `<button type="button" class="iconbtn" id="cs-confirm" aria-label="Salvar status">${icon('check', 17)}</button>` +
+      `<button type="button" class="iconbtn" id="cs-cancel" aria-label="Cancelar">${icon('close', 17)}</button>` +
+      `</div>` +
+      `<button type="button" class="btn btn--ghost btn--sm" id="cs-add">${icon('plus', 14)} Adicionar status personalizado</button>` +
+      `<p class="field__hint" id="cs-limit" hidden>Limite de 2 atingido — remova um para trocar.</p>` +
+      `</div>` +
       `<div class="field"><label for="proc-desc">Descrição <span class="field__optional">opcional</span></label>` +
       `<textarea id="proc-desc" rows="2" maxlength="1000" placeholder="Objetivo ou escopo deste processo"></textarea></div>` +
       `<div class="field"><label for="proc-source">Copiar critérios de</label>` +
@@ -1071,6 +1097,76 @@ function showNewProcess(collectionId) {
     footer:
       `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
       `<button type="button" class="btn btn--primary" data-save>${icon('plus', 15)} Criar processo</button>`,
+  });
+
+  const flowSelect = dialog.querySelector('#proc-flow');
+  const customWrap = dialog.querySelector('#proc-custom-wrap');
+  const csList = dialog.querySelector('#cs-list');
+  const csAddRow = dialog.querySelector('#cs-add-row');
+  const csAddBtn = dialog.querySelector('#cs-add');
+  const csLimit = dialog.querySelector('#cs-limit');
+  const csInput = dialog.querySelector('#cs-input');
+  const csConfirm = dialog.querySelector('#cs-confirm');
+  const csCancel = dialog.querySelector('#cs-cancel');
+  const customLabels = [];
+
+  const renderCustom = () => {
+    if (csList) {
+      csList.innerHTML = customLabels
+        .map(
+          (label, index) =>
+            `<span class="cs-chip"><span>${esc(label)}</span>` +
+            `<button type="button" class="cs-chip__x" data-cs-remove="${index}" aria-label="Remover ${esc(label)}">${icon('close', 13)}</button></span>`
+        )
+        .join('');
+    }
+    const full = customLabels.length >= 2;
+    if (csAddBtn) csAddBtn.hidden = full;
+    if (csLimit) csLimit.hidden = !full;
+    // Ao encher a lista, a linha de digitação não pode ficar aberta.
+    if (full && csAddRow) csAddRow.hidden = true;
+  };
+  const toggleCustom = () => {
+    if (customWrap) customWrap.hidden = flowSelect?.value !== 'requirements';
+  };
+
+  flowSelect?.addEventListener('change', toggleCustom);
+  toggleCustom();
+
+  csAddBtn?.addEventListener('click', () => {
+    csAddRow?.removeAttribute('hidden');
+    csAddBtn.hidden = true;
+    csInput?.focus();
+  });
+  csCancel?.addEventListener('click', () => {
+    if (csInput) csInput.value = '';
+    csAddRow?.setAttribute('hidden', '');
+    if (csAddBtn && customLabels.length < 2) csAddBtn.hidden = false;
+  });
+  const confirmCustom = () => {
+    const label = (csInput?.value || '').trim().replace(/\s+/g, ' ');
+    if (label.length < 2) { toast('Dê um nome ao status.', 'err'); csInput?.focus(); return; }
+    if (label.length > 40) { toast('Máximo de 40 caracteres.', 'err'); csInput?.focus(); return; }
+    if (customLabels.some((item) => item.toLowerCase() === label.toLowerCase())) { toast('Esse status já foi adicionado.', 'err'); csInput?.focus(); return; }
+    if (customLabels.length >= 2) { toast('Máximo de 2 status personalizados.', 'err'); return; }
+    customLabels.push(label);
+    if (csInput) csInput.value = '';
+    csAddRow?.setAttribute('hidden', '');
+    renderCustom();
+  };
+  csConfirm?.addEventListener('click', confirmCustom);
+  csInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); confirmCustom(); }
+    if (event.key === 'Escape') csCancel?.click();
+  });
+  csList?.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target.closest('[data-cs-remove]') : null;
+    if (!target) return;
+    const index = Number(target.dataset.csRemove);
+    if (Number.isInteger(index) && index >= 0) {
+      customLabels.splice(index, 1);
+      renderCustom();
+    }
   });
 
   const source = dialog.querySelector('#proc-source');
@@ -1107,12 +1203,17 @@ function showNewProcess(collectionId) {
       .map((input) => catalog.get(input.value))
       .filter(Boolean)
       .map((criterion) => ({ label: criterion.label, hint: criterion.hint || '' }));
+    const flow = dialog.querySelector('#proc-flow')?.value || 'documents';
+    const customStatuses =
+      flow === 'requirements' ? customLabels.map((label) => ({ label })) : [];
     try {
       const res = await api.createProcess({
         collectionId,
         name,
         description: dialog.querySelector('#proc-desc').value,
         criteria,
+        flow,
+        customStatuses,
       });
       setState(res.state);
       if (res.createdProcess) {
@@ -1379,6 +1480,14 @@ const ACTIONS = {
   'new-process': (el) => showNewProcess(el.dataset.collectionId),
   'switch-profile': () => showProfilePicker(getState()?.profiles || []),
   'open-import': () => openImportDialog(),
+  'open-item-dialog': () => openItemDialog(),
+  'evidence-delete': (el) => removeEvidence(el?.dataset?.evId),
+  'evidence-preview': (el) => openEvidencePreview(el?.dataset?.evId || el?.dataset?.id),
+  'evidence-unlink': (el) =>
+    el?.dataset?.checkId
+      ? unlinkAttachment(el.dataset.checkId, el.dataset.att)
+      : removeEvidence(el?.dataset?.evId || el?.dataset?.att),
+  'attach-evidence': (el) => openAttachEvidence(el?.dataset?.checkId, el?.dataset?.itemId),
   'export-csv': () => exportCsv(),
   print: () => window.print(),
   copy: async (el) => {
@@ -1461,8 +1570,70 @@ const ACTIONS = {
   'criterion-up': (el) => moveCriterion(el.dataset.id, -1),
   'criterion-down': (el) => moveCriterion(el.dataset.id, 1),
   'criterion-delete': (el) => deleteCriterion(el.dataset.id),
+  'cs-settings-add': (el) => {
+    const card = el?.closest('.card');
+    const row = card?.querySelector('[data-cs-row]');
+    const input = card?.querySelector('[data-cs-input]');
+    if (row) row.hidden = false;
+    if (el) el.hidden = true;
+    input?.focus();
+  },
+  'cs-settings-cancel': (el) => {
+    const card = el?.closest('.card');
+    const row = card?.querySelector('[data-cs-row]');
+    const input = card?.querySelector('[data-cs-input]');
+    const addBtn = card?.querySelector('[data-action="cs-settings-add"]');
+    if (input) input.value = '';
+    if (row) row.hidden = true;
+    if (addBtn) addBtn.hidden = customStatuses(getState()).length >= 2;
+  },
+  'cs-settings-confirm': (el) => {
+    const card = el?.closest('.card');
+    const input = card?.querySelector('[data-cs-input]');
+    const label = String(input?.value || '').trim().replace(/\s+/g, ' ');
+    const current = customStatuses(getState());
+    if (label.length < 2) {
+      toast('Dê um nome ao status.', 'err');
+      input?.focus();
+      return;
+    }
+    if (label.length > 40) {
+      toast('Máximo de 40 caracteres.', 'err');
+      input?.focus();
+      return;
+    }
+    if (current.length >= 2) {
+      toast('Máximo de 2 status personalizados.', 'err');
+      return;
+    }
+    if (current.some((item) => item.label.toLowerCase() === label.toLowerCase())) {
+      toast('Esse status já existe.', 'err');
+      input?.focus();
+      return;
+    }
+    return saveCustomStatuses(
+      [...current.map(({ id, label: name }) => ({ id, label: name })), { label }],
+      'Status adicionado.'
+    );
+  },
+  'cs-settings-remove': async (el) => {
+    const current = customStatuses(getState());
+    const target = current.find((item) => item.id === el?.dataset?.id);
+    if (!target) return;
+    const ok = await confirmSheet({
+      title: 'Remover status?',
+      message: `“${target.label}” sai da lista de resultados deste processo. Verificações que já usam esse status impedem a remoção.`,
+      confirmLabel: 'Remover',
+      danger: true,
+    });
+    if (!ok) return;
+    return saveCustomStatuses(
+      current.filter((item) => item.id !== target.id).map(({ id, label }) => ({ id, label })),
+      'Status removido.'
+    );
+  },
   'restore-backup': () => document.getElementById('restore-input')?.click(),
-  'reset-data': () => resetAll(),
+  'delete-process': () => deleteCurrentProcess(),
   'chip-remove': (el) => {
     el.closest('.chip')?.remove();
     updateChipCount();
@@ -1503,12 +1674,19 @@ function syncAfterCheck(check) {
   renderMasthead();
   renderNav();
   if (!doc) return;
-  const head = document.querySelector('.checks [data-checks-head]');
-  if (head) head.outerHTML = checksHeadHtml(state, doc);
+  // Cabeçalho, aviso de conclusão e resumo são atualizados no lugar: trocar o
+  // HTML inteiro a cada verificação fazia a sessão de análise piscar.
+  patchChecksHead(state, doc);
   const slot = document.querySelector('.checks [data-done-slot]');
-  if (slot) slot.innerHTML = doneBannerHtml(state, doc);
+  if (slot) {
+    const html = doneBannerHtml(state, doc);
+    if (slot.innerHTML !== html) slot.innerHTML = html;
+  }
   const summary = document.querySelector('[data-doc-summary]');
-  if (summary) summary.innerHTML = docSummaryHtml(state, doc);
+  if (summary) {
+    const html = docSummaryHtml(state, doc);
+    if (summary.innerHTML !== html) summary.innerHTML = html;
+  }
   refreshQueueCounts();
 }
 
@@ -1517,22 +1695,29 @@ function updateCheckRow(check, { focus = false, focusNote = false, status = null
   const row = document.querySelector(`[data-check-row="${check.id}"]`);
   if (!row) return;
   const doc = docById(state, check.docId);
-  const criterion = state.criteria.find((c) => c.id === check.criterionId);
-  const crit = criteriaSorted(state);
-  const index = crit.findIndex((c) => c.id === check.criterionId);
-  const holder = document.createElement('div');
-  holder.innerHTML = renderCheckRow(state, check, criterion, index, {
-    isLast: index === crit.length - 1,
-    disabled: doc?.active === false,
-  });
-  const next = holder.firstElementChild;
-  if (!next) return;
-  row.replaceWith(next);
+  const disabled = doc?.active === false;
+  const patched = patchCheckRow(row, state, check, { disabled });
+  let live = row;
+  if (!patched) {
+    // Casos raros (revisão do revisor, lista de resultados alterada): redesenha só esta linha.
+    const criterion = state.criteria.find((c) => c.id === check.criterionId);
+    const crit = criteriaSorted(state);
+    const index = crit.findIndex((c) => c.id === check.criterionId);
+    const holder = document.createElement('div');
+    holder.innerHTML = renderCheckRow(state, check, criterion, index, {
+      isLast: index === crit.length - 1,
+      disabled,
+    });
+    const next = holder.firstElementChild;
+    if (!next) return;
+    row.replaceWith(next);
+    live = next;
+  }
   if (focus && status) {
-    next.querySelector(`[data-status="${status}"]`)?.focus({ preventScroll: true });
+    live.querySelector(`[data-status="${status}"]`)?.focus({ preventScroll: true });
   }
   if (focusNote) {
-    next.querySelector('[data-note-id]')?.focus();
+    live.querySelector('[data-note-id]')?.focus({ preventScroll: true });
   }
 }
 
@@ -1562,6 +1747,7 @@ async function setCheckStatus(checkId, status, { focusNote = false } = {}) {
   if (status === 'ok' || status === 'na') ui.notesOpen.delete(checkId);
 
   updateCheckRow(check, {
+    // No iPad o teclado abre junto com o apontamento — é o fluxo que o Sergio usa.
     focusNote: focusNote && (status === 'nc' || status === 'obs'),
   });
   syncAfterCheck(check);
@@ -1665,9 +1851,12 @@ function openPreview(docId) {
   const doc = docById(getState(), docId);
   if (!doc) return;
   const url = api.fileUrl(doc.stored);
-  const kind = fileKind(doc.name, doc.mime);
+  const kind = isItemDoc(doc) ? 'item' : fileKind(doc.name, doc.mime);
   let body;
-  if (kind === 'pdf') {
+  if (kind === 'item') {
+    body = `<div class="preview-fallback">${icon('list', 22)}` +
+      `<p>Este é um item da listagem — ele reúne as evidências de cada critério. Abra uma evidência para ver o arquivo.</p></div>`;
+  } else if (kind === 'pdf') {
     body =
       `<iframe class="preview-frame" src="${url}#view=FitH" title="Pré-visualização de ${esc(doc.name)}"></iframe>` +
       `<p class="sheet__note">No iPad, se o PDF não aparecer aqui, use “Abrir em nova aba”.</p>`;
@@ -1680,25 +1869,32 @@ function openPreview(docId) {
   }
   openSheet({
     title: doc.name,
-    eyebrow: `${fileKindLabel(kind)} · ${fmtBytes(doc.size)}`,
+    eyebrow: `${fileKindLabel(kind)}${kind === 'item' ? '' : ` · ${fmtBytes(doc.size)}`}`,
     body,
     wide: true,
     footer:
-      `<a class="btn btn--secondary" href="${url}" target="_blank" rel="noopener">${icon('external', 15)} Abrir em nova aba</a>` +
-      `<a class="btn btn--primary" href="${url}?download=1" download>${icon('download', 15)} Baixar</a>`,
+      kind === 'item'
+        ? `<button type="button" class="btn btn--primary" data-close>Fechar</button>`
+        : `<a class="btn btn--secondary" href="${url}" target="_blank" rel="noopener">${icon('external', 15)} Abrir em nova aba</a>` +
+          `<a class="btn btn--primary" href="${url}?download=1" download>${icon('download', 15)} Baixar</a>`,
   });
 }
 
 function renameDoc(docId) {
   const doc = docById(getState(), docId);
   if (!doc) return;
+  const isItem = isItemDoc(doc);
   const dialog = openSheet({
-    title: 'Renomear documento',
-    eyebrow: fileKindLabel(fileKind(doc.name, doc.mime)),
+    title: isItem ? 'Renomear item' : 'Renomear documento',
+    eyebrow: fileKindLabel(isItem ? 'item' : fileKind(doc.name, doc.mime)),
     body:
-      `<div class="field"><label for="rename-input">Nome do arquivo</label>` +
+      `<div class="field"><label for="rename-input">${isItem ? 'Nome do item' : 'Nome do arquivo'}</label>` +
       `<input id="rename-input" type="text" maxlength="220" value="${esc(doc.name)}"></div>` +
-      `<p class="sheet__note">O arquivo em si não é alterado — apenas o nome que aparece no processo.</p>`,
+      `<p class="sheet__note">${
+        isItem
+          ? 'A numeração, as evidências e as verificações continuam iguais — só o nome muda.'
+          : 'O arquivo em si não é alterado — apenas o nome que aparece no processo.'
+      }</p>`,
     footer:
       `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
       `<button type="button" class="btn btn--primary" data-save>Salvar nome</button>`,
@@ -1789,13 +1985,17 @@ async function toggleDocActive(docId) {
 async function deleteDoc(docId) {
   const doc = docById(getState(), docId);
   if (!doc) return;
+  const isItem = isItemDoc(doc);
+  const evidences = isItem ? childDocuments(getState(), doc.id).length : 0;
   const st = docStats(getState(), doc.id);
   const ok = await confirmSheet({
-    title: 'Excluir documento?',
-    message:
-      `<b>${esc(doc.name)}</b> e ${plural(st.total, 'verificação vinculada', 'verificações vinculadas')} ` +
-      `serão removidos, junto com o arquivo enviado. Não há como desfazer.`,
-    confirmLabel: 'Excluir documento',
+    title: isItem ? 'Excluir linha?' : 'Excluir documento?',
+    message: isItem
+      ? `<b>${esc(doc.name)}</b> e ${plural(st.total, 'verificação vinculada', 'verificações vinculadas')} ` +
+        `${evidences ? `serão removidas, junto com ${plural(evidences, 'evidência', 'evidências')} anexada(s). ` : 'serão removidas. '}Não há como desfazer.`
+      : `<b>${esc(doc.name)}</b> e ${plural(st.total, 'verificação vinculada', 'verificações vinculadas')} ` +
+        `serão removidos, junto com o arquivo enviado. Não há como desfazer.`,
+    confirmLabel: isItem ? 'Excluir linha' : 'Excluir documento',
     danger: true,
   });
   if (!ok) return;
@@ -1804,7 +2004,7 @@ async function deleteDoc(docId) {
     setState(res.state);
     if (ui.route.name === 'document' || ui.route.name === 'workbench') navigate('#/documentos');
     else renderAll({ preserveScroll: true });
-    toast('Documento excluído.');
+    toast(isItem ? 'Linha excluída.' : 'Documento excluído.');
   } catch (err) {
     toast(err.message, 'err');
   }
@@ -1945,6 +2145,382 @@ async function handleFiles(files, dialog) {
   else toast('Nenhum documento foi importado.', 'err');
 }
 
+/* ------------------------------------------------------------ itens e evidências */
+
+function openEvidencePreview(id) {
+  if (id) openPreview(id);
+}
+
+/* ------------------------------------------------------------- item dialog */
+
+function openItemDialog() {
+  const state = getState();
+  const process = state?.process;
+  if (!process || !isRequirementsFlow(state)) return;
+
+  /** Nomes pendentes de envio, na ordem em que aparecerão na listagem. */
+  const names = [];
+
+  const dialog = openSheet({
+    title: 'Adicionar itens',
+    eyebrow: process.name,
+    body:
+      `<p class="sheet__note">Cada item é uma linha desta listagem (por exemplo, um prestador). ` +
+      `Ele recebe uma verificação por critério e guarda as evidências que comprovam cada uma.</p>` +
+      `<div class="field">` +
+      `<label for="item-name">Itens a adicionar <span class="field__optional" data-item-count>0</span></label>` +
+      `<div class="criteria-chips" data-item-chips></div>` +
+      `<p class="field__hint" data-item-empty>Nenhum item ainda — digite o nome abaixo e tecle Enter.</p>` +
+      `<div class="form-row">` +
+      `<input id="item-name" type="text" maxlength="220" autocomplete="off" spellcheck="false" ` +
+      `placeholder="Nome do item — ex.: RMC">` +
+      `<button type="button" class="btn btn--secondary btn--sm" id="item-add">${icon('plus', 15)} Adicionar</button>` +
+      `</div>` +
+      `<p class="field__hint">A numeração (01, 02…) é automática.</p>` +
+      `</div>` +
+      `<details class="item-paste">` +
+      `<summary>Colar vários de uma vez</summary>` +
+      `<textarea id="item-paste" class="input" rows="4" spellcheck="false" ` +
+      `placeholder="Um nome por linha — ex.:&#10;RMC&#10;CASA DO ELETRICISTA"></textarea>` +
+      `<button type="button" class="btn btn--ghost btn--sm" id="item-paste-add">${icon('plus', 14)} Adicionar todos</button>` +
+      `</details>`,
+    footer:
+      `<button type="button" class="btn btn--ghost" data-close>Cancelar</button>` +
+      `<button type="button" class="btn btn--primary" id="item-create" disabled>${icon('plus', 15)} ` +
+      `<span data-item-create-label>Adicionar itens</span></button>`,
+  });
+
+  const chipsHost = dialog.querySelector('[data-item-chips]');
+  const emptyHint = dialog.querySelector('[data-item-empty]');
+  const countEl = dialog.querySelector('[data-item-count]');
+  const nameInput = dialog.querySelector('#item-name');
+  const addBtn = dialog.querySelector('#item-add');
+  const createBtn = dialog.querySelector('#item-create');
+  const createLabel = dialog.querySelector('[data-item-create-label]');
+  const pasteBox = dialog.querySelector('#item-paste');
+  const pasteAdd = dialog.querySelector('#item-paste-add');
+
+  const render = () => {
+    if (chipsHost) {
+      chipsHost.innerHTML = names
+        .map(
+          (name, index) =>
+            `<span class="chip"><b class="chip__num">${String(index + 1).padStart(2, '0')}</b>` +
+            `<span>${esc(name)}</span>` +
+            `<button type="button" data-item-remove="${index}" aria-label="Remover ${esc(name)}">${icon(
+              'close',
+              11
+            )}</button></span>`
+        )
+        .join('');
+    }
+    if (emptyHint) emptyHint.hidden = names.length > 0;
+    if (countEl) countEl.textContent = names.length ? `${names.length} ${names.length === 1 ? 'item' : 'itens'}` : '0';
+    if (createBtn) createBtn.disabled = names.length === 0;
+    if (createLabel) {
+      createLabel.textContent = names.length
+        ? `Adicionar ${names.length} ${names.length === 1 ? 'item' : 'itens'}`
+        : 'Adicionar itens';
+    }
+  };
+
+  /** Devolve true quando o nome entrou na lista (ignora vazios e repetidos). */
+  const pushName = (raw) => {
+    const name = String(raw || '').trim().replace(/\s+/g, ' ');
+    if (!name) return false;
+    const key = name.toLowerCase();
+    if (names.some((item) => item.toLowerCase() === key)) return false;
+    names.push(name.slice(0, 220));
+    return true;
+  };
+
+  const addCurrent = () => {
+    const raw = nameInput?.value || '';
+    if (!pushName(raw)) {
+      if (!raw.trim()) nameInput?.focus();
+      else toast('Esse item já está na lista.', 'err');
+      return;
+    }
+    if (nameInput) nameInput.value = '';
+    render();
+    nameInput?.focus();
+  };
+
+  addBtn?.addEventListener('click', addCurrent);
+  nameInput?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    addCurrent();
+  });
+
+  pasteAdd?.addEventListener('click', () => {
+    const lines = String(pasteBox?.value || '').split(/[\r\n]+/);
+    let added = 0;
+    for (const line of lines) if (pushName(line)) added += 1;
+    if (pasteBox) pasteBox.value = '';
+    render();
+    toast(
+      added ? plural(added, 'item adicionado à lista.', 'itens adicionados à lista.') : 'Nenhum item novo.',
+      added ? 'ok' : 'err'
+    );
+  });
+  pasteBox?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      pasteAdd?.click();
+    }
+  });
+
+  chipsHost?.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target.closest('[data-item-remove]') : null;
+    if (!target) return;
+    const index = Number(target.dataset.itemRemove);
+    if (Number.isInteger(index) && index >= 0) {
+      names.splice(index, 1);
+      render();
+    }
+  });
+
+  createBtn?.addEventListener('click', async () => {
+    if (!names.length) return;
+    createBtn.disabled = true;
+    const errors = [];
+    try {
+      let latest = null;
+      for (const name of names) {
+        try {
+          const res = await api.addItem(process.id, { name });
+          if (res?.state) latest = res.state;
+        } catch (err) {
+          errors.push(`${name}: ${err.message || 'falha'}`);
+        }
+      }
+      if (latest) setState(latest);
+      dialog.close();
+      if (errors.length) toast(`Adicionados ${names.length - errors.length} de ${names.length}. Falharam: ${errors.join('; ')}`, 'err');
+      else toast(plural(names.length, 'item adicionado', 'itens adicionados'));
+      renderAll({ preserveScroll: true });
+    } catch (err) {
+      toast(err.message || 'Falha ao adicionar itens.', 'err');
+      createBtn.disabled = false;
+    }
+  });
+
+  render();
+  nameInput?.focus();
+}
+
+/** Evidência removida do item (e dos checks que a referenciavam). */
+async function removeEvidence(evId, { refreshList } = {}) {
+  if (!evId) return false;
+  const ok = await confirmSheet({
+    title: 'Remover evidência?',
+    message: 'A evidência será excluída do item e desvinculada das verificações que a usavam.',
+    confirmLabel: 'Remover',
+    danger: true,
+  });
+  if (!ok) return false;
+  try {
+    const res = await api.deleteDocument(evId);
+    if (res?.state) setState(res.state);
+    // Sem redesenho da página: o item some da lista e das linhas que o citavam.
+    if (typeof refreshList === 'function') refreshList();
+    syncEvidenceBlocks();
+    const doc = docById(getState(), ui.route.id);
+    if (doc) syncAfterCheck({ docId: doc.id });
+    toast('Evidência excluída.');
+    return true;
+  } catch (err) {
+    toast(err.message || 'Falha ao remover.', 'err');
+    return false;
+  }
+}
+
+/* -------------------------------------------------- anexo por critério */
+
+/** Atualiza só o bloco de evidências da linha visível.
+ *  Recriar a linha inteira a cada vínculo fazia a tela "piscar"; aqui o DOM
+ *  só muda quando o conteúdo realmente difere. */
+function updateCheckEvidence(check) {
+  const state = getState();
+  if (!state || !check) return;
+  const row = document.querySelector(`[data-check-row="${check.id}"]`);
+  if (!row) return;
+  const doc = docById(state, check.docId);
+  const html = evidenceBlockHtml(state, check, doc, doc?.active === false);
+  const block = row.querySelector('.check__evidence');
+  if (block) {
+    if (!html) block.remove();
+    else if (block.outerHTML !== html) block.outerHTML = html;
+    return;
+  }
+  if (!html) return;
+  const anchor = row.querySelector('.check__options');
+  if (anchor) anchor.insertAdjacentHTML('afterend', html);
+  else updateCheckRow(check);
+}
+
+/** Sincroniza os blocos de evidência de todas as linhas na tela. */
+function syncEvidenceBlocks() {
+  const state = getState();
+  if (!state) return;
+  document.querySelectorAll('[data-check-row]').forEach((row) => {
+    const check = state.checks.find((c) => c.id === row.getAttribute('data-check-row'));
+    if (check) updateCheckEvidence(check);
+  });
+}
+
+async function updateCheckAttachments(checkId, attachments) {
+  const res = await api.updateCheck(checkId, { attachments });
+  const fresh = res?.check;
+  if (fresh) {
+    mergeCheck(res.rev, fresh);
+    updateCheckEvidence(fresh);
+  }
+}
+
+async function unlinkAttachment(checkId, attId) {
+  if (!checkId || !attId) return;
+  const state = getState();
+  const check = state?.checks?.find((c) => c.id === checkId);
+  if (!check) return;
+  const next = (Array.isArray(check.attachments) ? check.attachments : []).filter((id) => id !== attId);
+  try {
+    await updateCheckAttachments(checkId, next);
+    toast('Evidência desvinculada.');
+  } catch (err) { toast(err.message || 'Falha ao desvincular.', 'err'); }
+}
+
+/** Lista de evidências do item, com checkbox de vínculo com o check. */
+function evidenceListHtml(state, itemId, checkId) {
+  const freshCheck = state?.checks?.find((c) => c.id === checkId);
+  const attached = new Set(Array.isArray(freshCheck?.attachments) ? freshCheck.attachments : []);
+  const children = childDocuments(state, itemId);
+  if (!children.length) {
+    return `<p class="evidence-empty">Nenhuma evidência neste item. Clique em “Enviar evidência”.</p>`;
+  }
+  return children
+    .map(
+      (att) =>
+        `<div class="evidence-row" data-ev-id="${att.id}">` +
+        `<label class="check-option evidence-row__label" title="Vincular a este critério">` +
+        `<input type="checkbox" data-ev-attach="${att.id}" ${attached.has(att.id) ? 'checked' : ''}>` +
+        `<span class="evidence-row__main">` +
+        `<span class="evidence-row__name">${esc(att.name)}</span>` +
+        `<span class="evidence-row__meta">${fmtBytes(att.size)} <i>·</i> ${esc(fmtDate(att.addedAt))}</span>` +
+        `</span></label>` +
+        `<span class="evidence-row__actions">` +
+        `<button type="button" class="iconbtn iconbtn--sm" data-ev-preview="${att.id}" aria-label="Abrir ${esc(att.name)}" title="Abrir">${icon(
+          'external',
+          16
+        )}</button>` +
+        `<button type="button" class="iconbtn iconbtn--sm iconbtn--danger" data-ev-delete="${att.id}" aria-label="Excluir ${esc(att.name)}" title="Excluir evidência">${icon(
+          'trash',
+          16
+        )}</button>` +
+        `</span></div>`
+    )
+    .join('');
+}
+
+async function openAttachEvidence(checkId, itemId) {
+  const state = getState();
+  const process = state?.process;
+  const item = docById(state, itemId);
+  const check = state?.checks?.find((c) => c.id === checkId);
+  if (!item || !check) return;
+  const criterion = state.criteria.find((c) => c.id === check.criterionId);
+  const processId = process?.id;
+
+  const dialog = openSheet({
+    title: 'Anexar evidência',
+    eyebrow: criterion?.label || item.name,
+    body:
+      `<p class="sheet__note">Evidências que comprovam <b>${esc(item.name)}</b> — marque quais comprovam este critério.</p>` +
+      `<div class="attach-list" style="max-height:340px;overflow:auto;">${evidenceListHtml(state, itemId, checkId)}</div>` +
+      `<input type="file" id="att-file" class="sr-only" multiple ` +
+      `accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.heic,.doc,.docx,.xls,.xlsx,.csv,.txt">` +
+      `<p class="field__hint">PDF, imagens, planilhas ou documentos — até 32 MB por arquivo.</p>`,
+    footer:
+      `<button type="button" class="btn btn--secondary" id="att-upload">${icon('upload', 15)} Enviar evidência</button>` +
+      `<span class="spacer"></span>` +
+      `<button type="button" class="btn btn--primary" data-close>Concluir</button>`,
+  });
+
+  const refreshList = () => {
+    const listEl = dialog.querySelector('.attach-list');
+    if (listEl) listEl.innerHTML = evidenceListHtml(getState(), itemId, checkId);
+    bindList();
+  };
+
+  const bindList = () => {
+    dialog.querySelectorAll('[data-ev-attach]').forEach((box) => {
+      box.addEventListener('change', async () => {
+        const freshCheck = getState()?.checks?.find((c) => c.id === checkId);
+        const current = new Set(Array.isArray(freshCheck?.attachments) ? freshCheck.attachments : []);
+        if (box.checked) current.add(box.dataset.evAttach);
+        else current.delete(box.dataset.evAttach);
+        // Evita duplo clique enquanto a gravação está em curso.
+        box.disabled = true;
+        try {
+          await updateCheckAttachments(checkId, [...current]);
+        } catch (err) {
+          box.checked = !box.checked;
+          toast(err.message || 'Falha ao vincular.', 'err');
+        } finally {
+          box.disabled = false;
+        }
+      });
+    });
+    dialog.querySelectorAll('[data-ev-preview]').forEach((button) => {
+      button.addEventListener('click', () => openEvidencePreview(button.dataset.evPreview));
+    });
+    dialog.querySelectorAll('[data-ev-delete]').forEach((button) => {
+      button.addEventListener('click', () => removeEvidence(button.dataset.evDelete, { refreshList }));
+    });
+  };
+  bindList();
+
+  const fileInput = dialog.querySelector('#att-file');
+  const uploadBtn = dialog.querySelector('#att-upload');
+  uploadBtn?.addEventListener('click', () => fileInput?.click());
+
+  fileInput?.addEventListener('change', async () => {
+    const files = [...(fileInput?.files || [])];
+    fileInput.value = '';
+    if (!files.length) return;
+    uploadBtn.disabled = true;
+    const failures = [];
+    for (const file of files) {
+      try {
+        if (file.size > MAX_UPLOAD) throw new Error('acima de 32 MB');
+        const data = await readBase64(file);
+        const res = await api.addDocument(processId, {
+          name: file.name,
+          mime: file.type || '',
+          size: file.size,
+          data,
+          itemId,
+        });
+        const created = res?.document;
+        if (res?.state) setState(res.state);
+        if (created?.id) {
+          const freshCheck = getState()?.checks?.find((c) => c.id === checkId);
+          const current = new Set(Array.isArray(freshCheck?.attachments) ? freshCheck.attachments : []);
+          current.add(created.id);
+          await updateCheckAttachments(checkId, [...current]);
+        }
+      } catch (err) {
+        failures.push(`${file.name}: ${err.message || 'falha'}`);
+      }
+    }
+    uploadBtn.disabled = false;
+    refreshList();
+    if (failures.length) toast(failures.join('; '), 'err');
+    else toast('Evidência anexada e vinculada a este critério.');
+  });
+}
+
 /* ------------------------------------------------------------ onboarding */
 
 function getChips() {
@@ -2052,6 +2628,25 @@ async function saveProcess(form) {
   }
 }
 
+/** Salva a lista de status personalizados do processo ativo (no máximo 2). */
+async function saveCustomStatuses(next, message = 'Status atualizados.') {
+  const state = getState();
+  const pid = state?.process?.id;
+  if (!pid) return;
+  if (next.length > 2) {
+    toast('Máximo de 2 status personalizados.', 'err');
+    return;
+  }
+  try {
+    const res = await api.updateProcess(pid, { customStatuses: next });
+    setState(res.state);
+    renderAll({ preserveScroll: true });
+    toast(message);
+  } catch (err) {
+    toast(err.message || 'Falha ao salvar os status.', 'err');
+  }
+}
+
 async function addCriterion(form) {
   const input = form.querySelector('input[name="label"]');
   const label = input?.value.trim() || '';
@@ -2131,31 +2726,43 @@ async function deleteCriterion(id) {
   }
 }
 
-async function resetAll() {
+/** Exclui o processo aberto com tudo que pertence a ele: documentos, arquivos,
+ *  critérios e verificações. Nenhum outro processo é afetado. */
+async function deleteCurrentProcess() {
   const state = getState();
+  const process = state?.process;
+  if (!process) {
+    toast('Abra o processo que deseja excluir.', 'err');
+    return;
+  }
+  const collectionId = state.collection?.id || process.collectionId;
+  const contado = (n, um, varios) => (n ? plural(n, um, varios) : '');
+  const partes = [
+    contado(state.documents?.length || 0, 'documento', 'documentos'),
+    contado(state.checks?.length || 0, 'verificação', 'verificações'),
+    contado(state.criteria?.length || 0, 'critério', 'critérios'),
+  ].filter(Boolean);
+  const lista =
+    partes.length > 1 ? `${partes.slice(0, -1).join(', ')} e ${partes[partes.length - 1]}` : partes[0] || '';
   const ok = await confirmSheet({
-    title: 'Apagar todos os dados?',
+    title: 'Excluir este processo?',
     message:
-      `Serão apagados o processo, ${plural(state.documents.length, 'documento', 'documentos')}, ` +
-      `${plural(state.checks.length, 'verificação', 'verificações')} e os arquivos enviados. ` +
-      `Baixe um backup antes, se quiser guardar o histórico.`,
-    confirmLabel: 'Apagar tudo',
+      (lista
+        ? `“${process.name}” sai do SCAD com ${lista}, mais os arquivos enviados. `
+        : `“${process.name}” sai do SCAD. `) +
+      `Nenhum outro processo da coleção é afetado. Não há desfazer.`,
+    confirmLabel: 'Excluir processo',
     danger: true,
+    requireText: process.name,
   });
   if (!ok) return;
   try {
-    const res = await api.reset();
-    setState(res.state);
+    await api.deleteProcess(process.id);
     setActiveProcess(null);
     configureApi({ process: null });
-    ui.docFilter = 'all';
-    ui.docQuery = '';
-    ui.findFilter = 'all';
-    ui.findQuery = '';
-    ui.queueAll = false;
-    ui.queueReview = false;
-    navigate('#/', { force: true });
-    toast('Dados apagados. Uma nova coleção pode ser criada.');
+    setState(await api.state());
+    navigate(`#/colecoes/${collectionId || ''}`, { force: true });
+    toast('Processo excluído.');
   } catch (err) {
     toast(err.message, 'err');
   }
@@ -2279,19 +2886,28 @@ function exportCsv() {
     return;
   }
   const crit = criteriaSorted(state);
+  const requirementsMode = isRequirementsFlow(state);
+  const listable = (state.documents || []).filter((d) => !d.itemId);
+  const evidenceNames = (ids) =>
+    (Array.isArray(ids) ? ids : [])
+      .map((id) => (state.documents || []).find((d) => d.id === id)?.name)
+      .filter(Boolean)
+      .join(' | ');
   const collectionName = state.collection?.name || '';
   const processName = state.process?.name || '';
   const processCode = state.process?.code || '';
+  const subjectsHeader = requirementsMode ? 'Linha' : 'Documento';
   const rows = [
     [
       'Coleção',
       'Processo',
       'Código',
-      'Documento',
-      'Situação do documento',
+      subjectsHeader,
+      'Situação',
       'Critério',
       'Resultado',
       'Nota',
+      ...(requirementsMode ? ['Evidências'] : []),
       'Revisão',
       'Revisor',
       'Mensagem da revisão',
@@ -2300,7 +2916,7 @@ function exportCsv() {
     ],
   ];
   const reviewLabels = { pending: 'Aguardando revisão', approved: 'Aprovada', flagged: 'Sinalizada' };
-  for (const doc of state.documents) {
+  for (const doc of listable) {
     for (const criterion of crit) {
       const check = state.checks.find((c) => c.docId === doc.id && c.criterionId === criterion.id);
       if (!check) continue;
@@ -2312,8 +2928,9 @@ function exportCsv() {
         doc.name,
         doc.active === false ? `Inativo — ${doc.inactiveReason || 'sem motivo'}` : 'Ativo',
         criterion.label,
-        doc.active === false ? 'Suspenso' : STATUS_LABEL[check.status] || check.status,
+        doc.active === false ? 'Suspenso' : statusLabelFor(state, check.status),
         check.note || '',
+        ...(requirementsMode ? [evidenceNames(check.attachments)] : []),
         doc.active === false ? '' : reviewLabels[review] || '',
         doc.active === false ? '' : check.review?.byName || '',
         doc.active === false ? '' : check.review?.note || '',
@@ -2340,8 +2957,11 @@ async function syncIfIdle() {
   try {
     const next = await api.state(getState().process?.id);
     if (next.rev !== getState().rev) {
-      setState(next);
-      renderAll({ preserveScroll: true });
+      if (canPatchInPlace(next)) patchRemoteState(next);
+      else {
+        setState(next);
+        renderAll({ preserveScroll: true });
+      }
       if (Date.now() - lastSyncToast > 30000) {
         lastSyncToast = Date.now();
         toast('Atualizado a partir de outro dispositivo.');
@@ -2351,5 +2971,37 @@ async function syncIfIdle() {
     /* servidor off-line: a próxima tentativa resolve */
   } finally {
     syncing = false;
+  }
+}
+
+/**
+ * Dá para atualizar sem reconstruir a página? Sim quando a estrutura não mudou:
+ * mesmos documentos, mesmos critérios e linhas de verificação na tela.
+ */
+function canPatchInPlace(next) {
+  const cur = getState();
+  if (!cur?.process || !next?.process) return false;
+  if (cur.process.id !== next.process.id) return false;
+  if (!document.querySelector('[data-check-row]')) return false;
+  const ids = (list) => (list || []).map((item) => item.id).join('|');
+  if (ids(cur.documents) !== ids(next.documents)) return false;
+  if (ids(cur.criteria) !== ids(next.criteria)) return false;
+  if (ids(cur.process.customStatuses) !== ids(next.process.customStatuses)) return false;
+  return true;
+}
+
+/** Atualiza dados de outro dispositivo mexendo só no que está na tela. */
+function patchRemoteState(next) {
+  setState(next);
+  document.querySelectorAll('[data-check-row]').forEach((row) => {
+    const check = next.checks.find((c) => c.id === row.dataset.checkRow);
+    if (check) updateCheckRow(check);
+    else row.remove();
+  });
+  const doc = docById(next, ui.route.id);
+  if (doc) syncAfterCheck({ docId: doc.id });
+  else {
+    renderMasthead();
+    renderNav();
   }
 }

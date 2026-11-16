@@ -139,6 +139,62 @@ export function setState(next) {
   scheduleCache();
 }
 
+/* -------------------------------------------- requisitos vs documentos */
+
+/** Processo ativo em fluxo requisitos/itens (listagem)? */
+export function isRequirementsFlow(s = state) {
+  return s?.process?.flow === 'requirements';
+}
+
+export function customStatuses(s = state) {
+  if (!isRequirementsFlow(s)) return [];
+  return Array.isArray(s?.process?.customStatuses) ? s.process.customStatuses : [];
+}
+
+/** Lista de opções de resultado, na ordem de exibição, respeitando o fluxo. */
+export function statusOptionList(s = state) {
+  const base = [
+    { status: 'ok', label: 'Conforme' },
+    { status: 'nc', label: 'Não conforme' },
+    { status: 'obs', label: 'Observação' },
+  ];
+  return [...base, ...customStatuses(s).map((c) => ({ status: c.id, label: c.label, custom: true }))];
+}
+
+/** Rótulo humano para qualquer status, incluindo customizados. */
+export function statusLabelFor(s, status) {
+  const custom = customStatuses(s).find((c) => c.id === status);
+  if (custom) return custom.label;
+  const base = { pending: 'Pendente', ok: 'Conforme', nc: 'Não conforme', obs: 'Observação' };
+  return base[status] || status || '—';
+}
+
+/** Status "apontamento" — nc, obs ou qualquer customizado do fluxo requisitos. */
+export function isPointedStatus(s, status) {
+  if (!status || status === 'pending' || status === 'ok') return false;
+  if (status === 'nc' || status === 'obs') return true;
+  return customStatuses(s).some((c) => c.id === status);
+}
+
+/** Todos os status customizados em uso: útil para filtros de "Ausente" & cia. */
+export function isItemDoc(doc) {
+  return doc?.itemKind === 'item';
+}
+
+/** Documentos-filhos do item (evidências presas ao item). */
+export function childDocuments(s, itemId) {
+  return (s?.documents || []).filter((d) => d.itemId === itemId);
+}
+
+function normalizeCustomStatusesForStore(list) {
+  const seen = new Set();
+  return (Array.isArray(list) ? list.slice(0, 2) : [])
+    .map((item) => ({ ...item, label: String(item?.label ?? '').trim() }))
+    .filter((item) => item.label && !seen.has(item.label.toLowerCase()) && seen.add(item.label.toLowerCase()));
+}
+
+export { normalizeCustomStatusesForStore };
+
 export function mergeCheck(rev, check) {
   if (!state) return;
   state.rev = rev;
@@ -174,20 +230,21 @@ export function docStats(s, docId) {
   const doc = docById(s, docId);
   const checks = checksOfDoc(s, docId);
   if (doc?.active === false) {
-    return { inactive: true, total: checks.length, done: 0, pending: 0, nc: 0, obs: 0, pct: 0 };
+    return { inactive: true, total: checks.length, done: 0, pending: 0, nc: 0, obs: 0, pointed: 0, pct: 0 };
   }
   const total = checks.length;
   const done = checks.filter((c) => c.status !== 'pending').length;
   const nc = checks.filter((c) => c.status === 'nc').length;
   const obs = checks.filter((c) => c.status === 'obs').length;
-  return { inactive: false, total, done, pending: total - done, nc, obs, pct: total ? Math.round((done / total) * 100) : 0 };
+  const pointed = checks.filter((c) => isPointedStatus(s, c.status)).length;
+  return { inactive: false, total, done, pending: total - done, nc, obs, pointed, pct: total ? Math.round((done / total) * 100) : 0 };
 }
 
 export function docFlag(s, docId) {
   const doc = docById(s, docId);
   if (doc?.active === false) return 'inactive';
   const st = docStats(s, docId);
-  if (st.nc || st.obs) return 'flagged';
+  if (st.pointed) return 'flagged';
   if (st.pending) return 'pending';
   return st.total ? 'done' : 'empty';
 }
@@ -204,6 +261,7 @@ export function overall(s = state) {
   const nc = activeChecks.filter((c) => c.status === 'nc').length;
   const obs = activeChecks.filter((c) => c.status === 'obs').length;
   const ok = activeChecks.filter((c) => c.status === 'ok').length;
+  const pointed = activeChecks.filter((c) => isPointedStatus(s, c.status)).length;
   const pendingDocs = activeDocs.filter((d) => docStats(s, d.id).pending > 0).length;
   const reviewStates = docs.map((doc) => reviewOfDoc(s, doc.id).status);
   return {
@@ -217,6 +275,7 @@ export function overall(s = state) {
     nc,
     obs,
     ok,
+    pointed,
     na: 0,
     suspended: suspended.length,
     pct: total ? Math.round((done / total) * 100) : 0,
@@ -230,7 +289,7 @@ export function findings(s = state) {
   const docs = new Map((s?.documents || []).map((d) => [d.id, d]));
   const criteria = new Map((s?.criteria || []).map((c) => [c.id, c]));
   return (s?.checks || [])
-    .filter((c) => c.status === 'nc' || c.status === 'obs')
+    .filter((c) => isPointedStatus(s, c.status))
     .map((c) => ({ check: c, doc: docs.get(c.docId) || null, criterion: criteria.get(c.criterionId) || null }))
     .filter((item) => item.doc && item.doc.active !== false)
     .sort((a, b) => {
