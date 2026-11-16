@@ -1,0 +1,3 @@
+# Bibliotecas de terceiros minimizadas: manter os bytes exatamente como foram
+# publicados (o git não deve converter fim de linha, senão o arquivo muda).
+public/vendor/*.min.js -text
