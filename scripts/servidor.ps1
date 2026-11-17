@@ -41,6 +41,23 @@ function Get-Escuta {
   @(Get-NetTCPConnection -LocalPort $Porta -State Listen -ErrorAction SilentlyContinue)
 }
 
+# A tarefa "SCAD Servidor" e criada como SYSTEM com ACL fechada: o usuario comum
+# consegue ve-la pelo Get-ScheduledTask em alguns casos, mas o schtasks responde
+# "Acesso negado" -- que significa TAREFA EXISTE, sem permissao de leitura, e nao
+# "nao existe". Sem tratar isso o status mentiria.
+function Get-EstadoTarefa {
+  $t = Get-ScheduledTask -TaskName $Tarefa -ErrorAction SilentlyContinue
+  if ($t) { return 'sim' }
+
+  # cmd /c captura o stderr do schtasks como texto (com 2>&1 do PowerShell o
+  # ErrorActionPreference 'Stop' transformaria o "Acesso negado" em excecao).
+  $saida = cmd /c "schtasks /query /tn ""$Tarefa"" 2>&1"
+  $texto = ($saida | Out-String)
+  if ($texto -match 'Acesso negado|Access is denied') { return 'negado' }
+  if ($texto -match 'nao existe|does not exist|cannot find') { return 'nao' }
+  return 'nao'
+}
+
 function Get-Dono($processId) {
   try {
     (Get-CimInstance Win32_Process -Filter "ProcessId=$processId").GetOwner().User
@@ -53,10 +70,18 @@ function Mostrar-Situacao {
   Write-Host '  ---------------------------' -ForegroundColor DarkGray
 
   $t = Get-ScheduledTask -TaskName $Tarefa -ErrorAction SilentlyContinue
-  if ($t) {
+  $estado = Get-EstadoTarefa
+  if ($estado -eq 'sim') {
     $i = $t | Get-ScheduledTaskInfo
     Write-Host "  Tarefa do Windows : SIM ($($t.State)) | ultimo resultado $($i.LastTaskResult) | desde $($i.LastRunTime)"
     Write-Host '                      inicia com a maquina, como SYSTEM, reinicia sozinha se cair'
+    $acao = ($t.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)".Trim() }) -join ' | '
+    $gatilho = ($t.Triggers | ForEach-Object { $_.CimClass.CimClassName -replace 'MSFT_Task', '' -replace 'Trigger', '' }) -join ', '
+    if ($acao) { Write-Host "                      acao: $acao" }
+    if ($gatilho) { Write-Host "                      gatilho: $gatilho | conta: $($t.Principal.UserId)" }
+  } elseif ($estado -eq 'negado') {
+    Write-Host '  Tarefa do Windows : SIM (existe; seu usuario nao tem permissao de ler os detalhes)'
+    Write-Host '                      para ver estado e ultima execucao, abra este controle como administrador'
   } else {
     Write-Host '  Tarefa do Windows : NAO instalada (o servidor vive enquanto alguem o subir)' -ForegroundColor Yellow
   }
@@ -64,7 +89,10 @@ function Mostrar-Situacao {
   $escuta = @(Get-Escuta)
   if ($escuta.Count -gt 0) {
     foreach ($e in $escuta) {
-      Write-Host "  Porta $Porta        : ouvindo | PID $($e.OwningProcess) | dono $(Get-Dono $e.OwningProcess)"
+      $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$($e.OwningProcess)" -ErrorAction SilentlyContinue
+      $sessao = if ($proc) { $proc.SessionId } else { '?' }
+      $dono = if ($sessao -eq 0) { 'SYSTEM (fora da sua sessao)' } else { Get-Dono $e.OwningProcess }
+      Write-Host "  Porta $Porta        : ouvindo | PID $($e.OwningProcess) | sessao $sessao | $dono"
     }
     try {
       $saude = Invoke-RestMethod $UrlSaude -TimeoutSec 5
@@ -104,9 +132,13 @@ function Parar-Servidor {
 }
 
 function Iniciar-Servidor {
-  $t = Get-ScheduledTask -TaskName $Tarefa -ErrorAction SilentlyContinue
-  if (-not $t) {
+  $estado = Get-EstadoTarefa
+  if ($estado -eq 'nao') {
     Write-Host "  A tarefa '$Tarefa' nao existe. Rode com -Acao instalar." -ForegroundColor Red
+    return
+  }
+  if ($estado -eq 'negado') {
+    Write-Host '  A tarefa existe mas seu usuario nao consegue controla-la. Rode como administrador.' -ForegroundColor Red
     return
   }
   if (@(Get-Escuta).Count -gt 0) {
@@ -133,8 +165,9 @@ function Instalar-Servidor {
   Iniciar-Servidor
 }
 
-# Acoes que mexem na tarefa do Windows precisam de administrador.
-if ($Acao -notin @('status', 'iniciar') -and -not (Test-Admin)) {
+# Tudo o que mexe na tarefa do Windows (parar, iniciar, instalar, remover) precisa
+# de administrador: a tarefa roda como SYSTEM e a ACL dela nega o usuario comum.
+if ($Acao -ne 'status' -and -not (Test-Admin)) {
   Write-Host '  Pedindo permissao de administrador...' -ForegroundColor Yellow
   Start-Process powershell -Verb RunAs -ArgumentList @(
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', "`"$PSCommandPath`"", '-Acao', $Acao
