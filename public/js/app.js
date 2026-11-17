@@ -2171,6 +2171,7 @@ async function montarDiffCorrecao(dialog, doc, correction) {
         ? 'A leitura de um dos arquivos falhou. A comparação lado a lado continua valendo — abra as duas versões e confira.'
         : 'Ao menos um dos arquivos não guarda texto legível (PDF digitalizado ou imagem). A comparação lado a lado continua valendo — abra as duas versões e confira.'
     );
+    // O aviso é curto: aparece aberto, senão o revisor não descobre o motivo.
     mostrar(true);
     return;
   }
@@ -2179,8 +2180,9 @@ async function montarDiffCorrecao(dialog, doc, correction) {
   resumo.textContent = resumoEmTexto(resultado.resumo);
   corpo.innerHTML = diffBodyHtml(resultado);
   secao.setAttribute('data-total', String(resultado.resumo.total));
-  // Mudança pequena abre sozinha; mudança grande fica fechada para não empurrar a comparação.
-  mostrar(resultado.resumo.total > 0 && resultado.resumo.total <= 6);
+  // Sempre começa fechado: a comparação lado a lado é o que o revisor veio ver.
+  // Quem quiser o detalhe abre pelo cabeçalho (o resumo já aparece no topo).
+  mostrar(false);
 }
 
 /** Envia a nova versão do arquivo (a atual vira histórico na aprovação). */

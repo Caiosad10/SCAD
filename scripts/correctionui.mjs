@@ -110,6 +110,13 @@ async function click(selector) {
   await sleep(700);
 }
 
+/** Clica dentro da gaveta que está aberta agora (ignora gavetas antigas no DOM). */
+async function clickNoDialog(selector) {
+  const ok = await evalJs(`(() => { const root = [...document.querySelectorAll('dialog[open]')].pop(); const el = root?.querySelector(${JSON.stringify(selector)}); if (!el) return false; el.click(); return true; })()`);
+  if (!ok) throw new Error(`elemento não encontrado na gaveta: ${selector}`);
+  await sleep(500);
+}
+
 /** Fecha qualquer gaveta que tenha ficado aberta (troca de tela entre passos). */
 async function closeAllDialogs() {
   await evalJs(`document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close())`);
@@ -247,24 +254,52 @@ if (wordDoc) {
     /2 adições/.test(resumo) && /2 alterações/.test(resumo) && !/remoç/.test(resumo),
     resumo
   );
+  const estadoPainel = () =>
+    evalJs(`(() => {
+      const root = [...document.querySelectorAll('dialog[open]')].pop();
+      if (!root) return null;
+      const secao = root.querySelector('[data-compare-diff]');
+      const corpo = root.querySelector('[data-diff-host]');
+      const botao = root.querySelector('[data-compare-diff-toggle]');
+      return {
+        secao: Boolean(secao),
+        open: secao?.getAttribute('data-open'),
+        expandido: botao?.getAttribute('aria-expanded'),
+        aberto: corpo ? !corpo.hidden : null,
+      };
+    })()`);
+  const fechado = await estadoPainel();
+  check(
+    'painel "O que mudou" começa fechado, só com o resumo',
+    fechado?.aberto === false && fechado?.open === 'false' && fechado?.expandido === 'false',
+    JSON.stringify(fechado)
+  );
+  await sleep(200);
+  await shot('correcao-12-diff-fechado');
+  await clickNoDialog('[data-compare-diff-toggle]');
+  const aberto = await estadoPainel();
+  check('cabeçalho abre o painel quando o revisor pede', aberto?.aberto === true && aberto?.expandido === 'true', JSON.stringify(aberto));
+  await sleep(300);
   const painel = await evalJs(`(() => {
     const root = [...document.querySelectorAll('dialog[open]')].pop();
     if (!root) return null;
-    const secao = root.querySelector('[data-compare-diff]');
-    const corpo = root.querySelector('[data-diff-host]');
     const linhas = (seletor) => [...root.querySelectorAll(seletor)].map((el) => el.textContent.trim());
     return {
-      secao: Boolean(secao),
-      open: secao?.getAttribute('data-open'),
-      aberto: corpo ? !corpo.hidden : null,
+      fonte: root.querySelectorAll('.diff__fonte').length,
+      nota: root.querySelector('.diff__note')?.textContent?.trim() || '',
       ctx: [...root.querySelectorAll('.diff__ctx')].map((el) => el.textContent.trim()),
       itens: root.querySelectorAll('.diff__item').length,
       ins: linhas('.diff__line--add ins'),
       del: linhas('.diff__line--del del'),
-      novas: [...root.querySelectorAll('.diff__line--add')].map((el) => el.innerText.replace(/^\\+\\s*/, '').trim()),
+      novas: [...root.querySelectorAll('.diff__line--add')].map((el) => el.innerText.replace(/^\\+?\\s*/, '').trim()),
     };
   })()`);
-  check('mudança pequena abre o painel sozinha', painel?.aberto === true && painel?.open === 'true', JSON.stringify(painel?.aberto));
+  check(
+    'rodapé avisa que os trechos são texto do arquivo, não do sistema',
+    /texto dos dois arquivos/i.test(painel?.nota || '') && /não informação do sistema/i.test(painel?.nota || ''),
+    JSON.stringify(painel?.nota)
+  );
+  check('estilo original do painel mantido (sem caixa de aviso)', painel?.fonte === 0, JSON.stringify(painel?.fonte));
   check(
     'trechos agrupados pela âncora do documento',
     (painel?.ctx || []).some((item) => /2\. Responsabilidades/.test(item)),
@@ -277,13 +312,17 @@ if (wordDoc) {
     /três\s+dias\s+uteis/.test((painel?.del || []).join(' ').replace(/\s+/g, ' ')),
     JSON.stringify(painel?.del)
   );
-  await sleep(500);
+  await sleep(400);
   await shot('correcao-11-diff');
-  await click('[data-compare-diff-toggle]');
-  const recolhido = await evalJs('document.querySelector("[data-diff-host]").hidden');
-  await click('[data-compare-diff-toggle]');
-  const reaberto = await evalJs('!document.querySelector("[data-diff-host]").hidden');
-  check('cabeçalho recolhe e reabre o painel', recolhido === true && reaberto === true, JSON.stringify({ recolhido, reaberto }));
+  await clickNoDialog('[data-compare-diff-toggle]');
+  const recolhido = await estadoPainel();
+  await clickNoDialog('[data-compare-diff-toggle]');
+  const reaberto = await estadoPainel();
+  check(
+    'cabeçalho recolhe e reabre o painel',
+    recolhido?.aberto === false && reaberto?.aberto === true,
+    JSON.stringify({ recolhido: recolhido?.aberto, reaberto: reaberto?.aberto })
+  );
   await closeAllDialogs();
   await goto(`#/documentos/${DOC}`);
 } else {

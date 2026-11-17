@@ -142,7 +142,7 @@ export function diffBodyHtml(resultado, { limite = 80 } = {}) {
   return (
     `<ol class="diff">${blocos}</ol>` +
     (restantes > 0 ? `<p class="diff__more">… e mais ${restantes} trecho(s) — abra a versão corrigida para ver o resto.</p>` : '') +
-    `<p class="diff__note">Comparação automática do <b>texto</b> dos dois arquivos: imagens, tabelas e formatação não entram. ` +
-    `Serve para o revisor achar o que mudou — o documento em si continua valendo como anexo.</p>`
+    `<p class="diff__note">Trechos copiados do <b>texto dos dois arquivos</b> — é o conteúdo do documento, não informação do sistema. ` +
+    `Imagens, tabelas e formatação não entram. Serve para o revisor achar o que mudou — o documento em si continua valendo como anexo.</p>`
   );
 }
