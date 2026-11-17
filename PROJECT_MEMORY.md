@@ -1,7 +1,7 @@
 # SCAD — Project Memory
 
-**Última atualização:** 2026-11-10
-**Estado:** v2.0 implementada e testada em branch `fase-a` (cópia de produção); **produção ainda na v1.0** até a janela de deploy.
+**Última atualização:** 2026-11-17
+**Estado:** **v2.3.0 em produção** (`scad/`, porta 4177, desde 17/11/2026) — correção com comparação antes/depois, versionamento e reabertura de revisão. Desenvolvimento no worktree `scad-v2` (branch `fase-a`), QA isolado na porta 4188 com dados de teste.
 **Repositório/app:** `C:\Users\Citra LTDA\OneDrive\Desktop\DSH\scad` (produção) · branch em `scad-v2` (worktree)
 
 Este documento é a fonte de verdade das decisões de produto, regras de negócio e próximos passos. Atualizar sempre que uma decisão for tomada.
