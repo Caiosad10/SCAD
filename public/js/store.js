@@ -19,6 +19,7 @@ export const ui = {
   route: { name: 'dashboard', id: null, param: null },
   docFilter: 'all',
   docQuery: '',
+  docOrder: 'default',
   findFilter: 'all',
   findQuery: '',
   notesOpen: new Set(),
@@ -249,6 +250,42 @@ export function docFlag(s, docId) {
   return st.total ? 'done' : 'empty';
 }
 
+/**
+ * Quando o documento mexeu pela última vez: a verificação mais recente, a
+ * correção enviada, a revisão reaberta — o que veio por último. Serve para o
+ * revisor ordenar a fila pelo que acabou de chegar.
+ */
+export function docActivity(s, docId) {
+  const doc = docById(s, docId);
+  if (!doc) return '';
+  let latest = doc.addedAt || '';
+  const toma = (valor) => {
+    if (valor && valor > latest) latest = valor;
+  };
+  for (const check of checksOfDoc(s, docId)) {
+    toma(check.updatedAt);
+    toma(check.review?.at);
+  }
+  toma(doc.correction?.addedAt);
+  toma(doc.reopen?.at);
+  for (const version of doc.versions || []) toma(version.replacedAt);
+  return latest;
+}
+
+/**
+ * Comparador da ordem escolhida na lista (`ui.docOrder`). Devolve `null` para a
+ * ordem padrão (importação). Usado na lista de documentos e na fila de revisão,
+ * para o revisor ver primeiro o que acabou de chegar nos dois lugares.
+ */
+export function orderComparator(s) {
+  if (ui.docOrder === 'recent') return (a, b) => docActivity(s, b.id).localeCompare(docActivity(s, a.id));
+  if (ui.docOrder === 'stale') return (a, b) => docActivity(s, a.id).localeCompare(docActivity(s, b.id));
+  if (ui.docOrder === 'name') {
+    return (a, b) => a.name.localeCompare(b.name, 'pt-BR', { numeric: true, sensitivity: 'base' });
+  }
+  return null;
+}
+
 export function overall(s = state) {
   const docs = s?.documents || [];
   const activeDocs = docs.filter((d) => d.active !== false);
@@ -410,10 +447,12 @@ export function currentVersion(doc) {
 }
 
 export function reviewQueueItems(s) {
-  return (s?.documents || []).filter((doc) => {
+  const lista = (s?.documents || []).filter((doc) => {
     const review = reviewOfDoc(s, doc.id);
     return review.status === 'awaiting' || review.status === 'attention';
   });
+  const cmp = orderComparator(s);
+  return cmp ? lista.slice().sort(cmp) : lista;
 }
 
 /** Documento pronto para revisão: todas as verificações com resultado e nenhuma aprovada ainda. */

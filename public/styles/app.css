@@ -1564,6 +1564,37 @@ p {
   font-variant-numeric: tabular-nums;
 }
 
+/* Ordem da lista — o revisor usa "Atividade recente" para ver o que acabou de chegar. */
+.toolbar__order {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+}
+
+.toolbar__order select {
+  height: 27px;
+  max-width: 180px;
+  padding: 0 var(--s2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--card);
+  font-family: var(--font-sans);
+  font-size: var(--t-caption);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+}
+
+.toolbar__order select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
 .segmented {
   display: inline-flex;
   align-items: center;

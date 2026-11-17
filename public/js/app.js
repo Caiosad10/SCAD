@@ -154,6 +154,7 @@ function saveSession() {
         processId: getState()?.process?.id || null,
         docFilter: ui.docFilter || 'all',
         docQuery: ui.docQuery || '',
+        docOrder: ui.docOrder || 'default',
         findFilter: ui.findFilter || 'all',
         findQuery: ui.findQuery || '',
         queueAll: Boolean(ui.queueAll),
@@ -200,6 +201,7 @@ function restoreSession() {
   if (saved.processId && ui.activeProcessId && saved.processId !== ui.activeProcessId) return false;
   if (typeof saved.docFilter === 'string') ui.docFilter = saved.docFilter;
   if (typeof saved.docQuery === 'string') ui.docQuery = saved.docQuery;
+  if (typeof saved.docOrder === 'string') ui.docOrder = saved.docOrder;
   if (typeof saved.findFilter === 'string') ui.findFilter = saved.findFilter;
   if (typeof saved.findQuery === 'string') ui.findQuery = saved.findQuery;
   ui.queueAll = Boolean(saved.queueAll);
@@ -878,7 +880,11 @@ function bindEvents() {
   document.addEventListener('change', (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (target.name === 'preset' && target.type === 'radio') {
+    if (target.matches('[data-filter="doc-order"]')) {
+      ui.docOrder = target.value || 'default';
+      refreshDocList();
+      scheduleSessionSave();
+    } else if (target.name === 'preset' && target.type === 'radio') {
       const preset = PRESET_LIST.find((p) => p.id === target.value);
       if (preset) setChips(preset.items);
     } else if (target.matches('[data-criterion-label]')) {

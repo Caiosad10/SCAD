@@ -581,4 +581,16 @@ Decidido depois de a correção com versionamento já estar validada: o diff ent
 - **O que compara:** o **texto**. Imagens, tabelas, cabeçalho, numeração automática e formatação não entram — e o painel diz isso ao revisor. `.docx` e `.doc` são lidos; **PDF digitalizado não tem texto** e recebe um aviso explícito ("PDF digitalizado não tem texto para comparar") em vez de um resultado falso vazio. Os 7 PDFs da produção são formulários assinados/digitalizados — neles a comparação continua sendo lado a lado, como antes.
 - **Limite conhecido do `.doc`:** como o `.doc` é extraído como texto corrido, o cabeçalho do formulário pode aparecer deslocado dentro da lista (no teste do DC 0008, o bloco do cabeçalho caiu junto do item 7). É artefato da conversão, não do documento; o `.docx` mantém a ordem dos parágrafos.
 - **Custo:** guardas de tamanho (`LIMITE_BLOCOS`, `LIMITE_PALAVRAS`) para documento gigante não travar a aba; a lista mostra até 80 trechos e avisa quantos ficaram de fora.
-- **Testes:** `scripts/difftest.mjs` (28, no Node), `scripts/correctionui.mjs` (42 no navegador, 12 delas do painel) e `scripts/mkdocx.mjs` para gerar o par de .docx do cenário.
+- **Testes:** `scripts/difftest.mjs` (28, no Node), `scripts/correctionui.mjs` (43 no navegador, 12 delas do painel) e `scripts/mkdocx.mjs` para gerar o par de .docx do cenário.
+
+#### 20.8 Ordem da lista de documentos (2026-11-17)
+
+Pedido do Sergio depois de validar o diff: ao abrir "Aguardando revisão" ele quer poder ver primeiro **o que acabou de chegar** — a verificação ou a correção mais recente.
+
+- **O que tem:** um seletor `Ordem` na barra da lista de documentos, com quatro opções — **Padrão (importação)**, **Atividade recente**, **Parado há mais tempo** e **Nome (A–Z)**.
+- **O que é "atividade":** a mexida mais recente do documento (`docActivity` em `store.js`) entre verificação (`updatedAt`, `review.at`), correção enviada (`correction.addedAt`), reabertura (`reopen.at`), versão arquivada (`versions[].replacedAt`) e a importação (`addedAt`) como piso.
+- **Vale nos dois lugares:** a lista (via `filterDocuments`) e a fila de revisão do "Analisar" (`reviewQueueItems`) usam o mesmo comparador (`orderComparator`), então o revisor vê a mesma sequência nos dois.
+- **A linha acompanha:** ordenando por atividade, a linha troca a data de importação por **"última atividade há X"** — senão a ordem pareceria aleatória.
+- **Onde fica:** só na sessão do navegador (`ui.docOrder`), salvo junto dos outros filtros: recarregar mantém a escolha. Nenhuma mudança no servidor.
+- **Numeração:** o `01`, `02`… continua sendo a posição de importação, para o revisor não perder a referência do acervo.
+- **Testes:** `scripts/ordertest.mjs` (12 no navegador, só leitura — não cria nem altera documento): ordem padrão, atividade recente, parado há mais tempo, nome, filtro de revisão, data na linha, memória da escolha e largura do iPad.

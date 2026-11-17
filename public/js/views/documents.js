@@ -3,6 +3,7 @@ import {
   fmtBytes,
   fmtDate,
   plural,
+  relTime,
   stamp,
   bar,
   emptyState,
@@ -15,7 +16,9 @@ import { icon, statusMark } from '../icons.js';
 import {
   docById,
   docStats,
+  docActivity,
   docFlag,
+  orderComparator,
   criteriaSorted,
   overall,
   ui,
@@ -46,6 +49,19 @@ const FILTERS = [
   { id: 'inactive', label: 'Inativos' },
 ];
 
+/** Ordem da lista. "Parado há mais tempo" é o inverso de "Atividade recente". */
+const ORDERS = [
+  { id: 'default', label: 'Padrão (importação)' },
+  { id: 'recent', label: 'Atividade recente' },
+  { id: 'stale', label: 'Parado há mais tempo' },
+  { id: 'name', label: 'Nome (A–Z)' },
+];
+
+/** A ordem combina com o que o revisor está olhando? (mostra a data da atividade) */
+function orderByActivity() {
+  return ui.docOrder === 'recent' || ui.docOrder === 'stale';
+}
+
 function docStamp(state, doc) {
   if (doc.active === false) return stamp('na', { label: 'Inativo' });
   const review = reviewOfDoc(state, doc.id);
@@ -62,7 +78,7 @@ function docStamp(state, doc) {
 
 export function filterDocuments(state) {
   const query = ui.docQuery.trim().toLowerCase();
-  return listableDocuments(state)
+  const lista = listableDocuments(state)
     .map((doc, index) => ({ doc, index }))
     .filter(({ doc }) => {
       if (query && !doc.name.toLowerCase().includes(query)) return false;
@@ -80,6 +96,11 @@ export function filterDocuments(state) {
       if (ui.docFilter === 'approved') return reviewOfDoc(state, doc.id).status === 'approved';
       return true;
     });
+
+  // Datas em ISO comparam como texto: não precisa converter nada.
+  const cmp = orderComparator(state);
+  if (cmp) lista.sort((a, b) => cmp(a.doc, b.doc));
+  return lista;
 }
 
 function filterCounts(state) {
@@ -166,6 +187,12 @@ export function renderDocumentsList(state) {
           `title="Ver o arquivo sem baixar" aria-label="Ver o arquivo ${esc(doc.name)}">` +
           `${icon('external', 15)}</button>`;
 
+      // Ordenando por atividade, a data que interessa é a da última mexida
+      // (verificação, correção, reabertura), não a da importação.
+      const quando = orderByActivity()
+        ? `última atividade ${esc(relTime(docActivity(state, doc.id)))}`
+        : esc(fmtDate(doc.addedAt));
+
       return (
         `<div class="docrow${inactive ? ' is-inactive' : ''}" data-doc-id="${doc.id}">` +
         `<a class="docrow__hit" href="#/documentos/${doc.id}" aria-label="Abrir ${esc(doc.name)}"></a>` +
@@ -178,8 +205,8 @@ export function renderDocumentsList(state) {
           inactive
             ? `<b>Inativo</b> <i>·</i> ${esc(doc.inactiveReason || 'sem motivo registrado')}`
             : isItem
-              ? `Item de listagem <i>·</i> ${children.length} ${children.length === 1 ? 'evidência' : 'evidências'} <i>·</i> ${st.done}/${st.total} verificações <i>·</i> ${esc(fmtDate(doc.addedAt))}`
-              : `${esc(fileKindLabel(kind))} <i>·</i> ${fmtBytes(doc.size)} <i>·</i> ${st.done}/${st.total} verificações <i>·</i> ${esc(fmtDate(doc.addedAt))}`
+              ? `Item de listagem <i>·</i> ${children.length} ${children.length === 1 ? 'evidência' : 'evidências'} <i>·</i> ${st.done}/${st.total} verificações <i>·</i> ${quando}`
+              : `${esc(fileKindLabel(kind))} <i>·</i> ${fmtBytes(doc.size)} <i>·</i> ${st.done}/${st.total} verificações <i>·</i> ${quando}`
         }</span>` +
         `</span>` +
         `<span class="docrow__dots" aria-hidden="true">${dots}</span>` +
@@ -249,8 +276,14 @@ export function renderDocuments(state) {
     (listable.length
       ? `<div class="toolbar">` +
         `<div class="segmented" role="group" aria-label="Filtrar documentos">${tabs}</div>` +
+        `<div class="toolbar__right">` +
+        `<label class="toolbar__order"><span>Ordem</span>` +
+        `<select data-filter="doc-order" aria-label="Ordenar os documentos">${ORDERS.map(
+          (ordem) =>
+            `<option value="${ordem.id}"${ui.docOrder === ordem.id ? ' selected' : ''}>${esc(ordem.label)}</option>`
+        ).join('')}</select></label>` +
         `<span class="toolbar__count" id="doc-results">${filterDocuments(state).length} de ${listable.length}</span>` +
-        `</div>`
+        `</div></div>`
       : '') +
     filterNote +
     `<div id="doclist">${renderDocumentsList(state)}</div>` +
