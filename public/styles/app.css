@@ -5098,6 +5098,7 @@ body.nav-hidden .content {
   .queue,
   .checks__foot,
   .finding__actions,
+  .finding-group__head .iconbtn,
   .section-head__action,
   .review-strip,
   .skip {

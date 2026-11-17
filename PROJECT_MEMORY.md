@@ -497,7 +497,7 @@ Numeração das linhas é automática e recalculada na tela (não fica gravada n
 
 Levantamento feito no código já em produção (nada implementado ainda):
 
-1. **Apontamentos não abre o arquivo.** `views/findings.js` só oferece "editar nota" (`data-action="finding-edit"`): a linha mostra documento, critério e observação, e daí não há como ver o arquivo — nem prévia, nem link. É o buraco mais visível, porque o revisor lê o apontamento e quer conferir o documento na hora. Correção barata (botão "Ver arquivo" reaproveitando `doc-preview`).
+1. **Apontamentos não abre o arquivo.** `views/findings.js` só oferece "editar nota" (`data-action="finding-edit"`): a linha mostra documento, critério e observação, e daí não há como ver o arquivo — nem prévia, nem link. É o buraco mais visível, porque o revisor lê o apontamento e quer conferir o documento na hora. Correção barata (botão "Ver arquivo" reaproveitando `doc-preview`). — **FEITO em 17/11** (v2.3-dev, ver 20.9).
 2. **Buscar dentro do documento.** Hoje a gaveta não tem busca: num POP de 10 páginas ou num .doc de 92 linhas o revisor rola até achar. Dá para destacar ocorrências no texto já renderizado (docx e .doc em texto), com contador e "próxima" — tudo no cliente, sem tocar no arquivo.
 3. **Tabelas no .doc viram texto corrido.** As células terminam em 0x07 no fluxo do Word; hoje viram quebra de linha e a tabela perde a forma (dá para reconstruir com `<table>` quando houver células na mesma linha). Vale porque 52 dos 95 arquivos da produção são .doc e quase todos têm tabela de responsabilidades/prazo.
 4. **Formato aceito sem prévia.** `.txt`, `.rtf` e `.odt` são aceitos na importação, mas caem no aviso "este formato não tem pré-visualização". `.txt` é uma linha de código; `.odt` é ZIP (mesmas bibliotecas do .docx, com outro nome de arquivo interno); `.rtf` exigiria conversor — deixar como está e explicar.
@@ -594,3 +594,13 @@ Pedido do Sergio depois de validar o diff: ao abrir "Aguardando revisão" ele qu
 - **Onde fica:** só na sessão do navegador (`ui.docOrder`), salvo junto dos outros filtros: recarregar mantém a escolha. Nenhuma mudança no servidor.
 - **Numeração:** o `01`, `02`… continua sendo a posição de importação, para o revisor não perder a referência do acervo.
 - **Testes:** `scripts/ordertest.mjs` (12 no navegador, só leitura — não cria nem altera documento): ordem padrão, atividade recente, parado há mais tempo, nome, filtro de revisão, data na linha, memória da escolha e largura do iPad.
+
+#### 20.9 Abrir o arquivo direto de Apontamentos (2026-11-17)
+
+Era o item 1 da varredura (18.1) e o Sergio escolheu entre as sugestões rápidas.
+
+- **O que tem:** cada grupo de apontamento (que é um documento) ganhou um botão no cabeçalho, na mesma margem direita das ações da linha — abre a **mesma gaveta de prévia** da lista de documentos (`doc-preview`), sem sair da tela: o revisor lê a nota e confere o arquivo, e ao fechar a lista continua onde estava.
+- **Item de listagem:** grupo cujo "documento" é um item do fluxo por itens usa `item-preview` (a gaveta das evidências), que é o caminho certo ali — o ícone muda para o de lista.
+- **Impressão:** o botão não vai para o papel (`@media print` esconde `.finding-group__head .iconbtn`); o nome do documento continua.
+- **Nada no servidor:** só `views/findings.js` e uma linha de CSS de impressão.
+- **Testes:** `scripts/findingstest.mjs` (17 no navegador): grupo com botão, gaveta abre com o nome do documento e mostra o arquivo, não troca de tela, fecha, "editar nota" intacto, medidas da caixa (dentro do cabeçalho, sem sobrepor o contador, 16 px da margem, toque ≥ 26 px), iPad sem estouro e botão fora da impressão.

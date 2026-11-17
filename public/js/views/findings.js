@@ -1,6 +1,6 @@
 import { esc, stamp, emptyState, relTime, fmtTime, plural } from '../ui.js';
 import { icon } from '../icons.js';
-import { findings, overall, ui, customStatuses, statusLabelFor, isPointedStatus } from '../store.js';
+import { findings, overall, ui, customStatuses, statusLabelFor, isPointedStatus, isItemDoc } from '../store.js';
 
 function matchFinding(item, query) {
   if (!query) return true;
@@ -122,6 +122,14 @@ export function renderFindingsResults(state) {
 
   return [...groups.values()]
     .map(({ doc, items: groupItems }) => {
+      // O arquivo do documento fica a um clique: o revisor lê o apontamento e
+      // confere a evidência sem sair da tela de Apontamentos.
+      const previa = isItemDoc(doc)
+        ? `<button type="button" class="iconbtn iconbtn--sm" data-action="item-preview" data-id="${doc.id}" ` +
+          `title="Ver as evidências deste item" aria-label="Ver as evidências de ${esc(doc.name)}">${icon('docs', 15)}</button>`
+        : `<button type="button" class="iconbtn iconbtn--sm" data-action="doc-preview" data-id="${doc.id}" ` +
+          `title="Ver o arquivo sem baixar" aria-label="Ver o arquivo de ${esc(doc.name)}">${icon('external', 15)}</button>`;
+
       const rows = groupItems
         .map(({ check, criterion }) => {
           const note = (check.note || '').trim();
@@ -152,6 +160,7 @@ export function renderFindingsResults(state) {
         `<div class="finding-group__head">` +
         `<a class="finding-group__name" href="#/documentos/${doc.id}">${esc(doc.name)}</a>` +
         `<span class="finding-group__count">${plural(groupItems.length, 'apontamento', 'apontamentos')}</span>` +
+        previa +
         `</div>${rows}</section>`
       );
     })
