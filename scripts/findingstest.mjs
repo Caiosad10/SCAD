@@ -135,26 +135,43 @@ check(
 check('as notas continuam na lista (nada saiu da tela)', grupos.linhas >= grupos.total, JSON.stringify({ linhas: grupos.linhas }));
 
 // Abre a prévia do primeiro grupo e confere que é o arquivo daquele documento.
-const aberto = await evalJs(`(() => {
+// O .docx é desenhado depois (docx-preview é assíncrono), então clico, espero e
+// só então meço a gaveta — medir logo depois do clique dava falso negativo.
+const nomeDoGrupo = await evalJs(`(() => {
   const grupo = document.querySelector('.finding-group');
   const nome = grupo.querySelector('.finding-group__name').textContent.trim();
   grupo.querySelector('[data-action="doc-preview"], [data-action="item-preview"]').click();
+  return nome;
+})()`);
+await sleep(2000);
+const aberto = await evalJs(`(() => {
   const dialog = [...document.querySelectorAll('dialog[open]')].pop();
+  const corpo = dialog?.querySelector('.sheet__body');
+  const texto = (corpo?.innerText || '').trim();
   return {
-    nome,
+    nome: ${JSON.stringify(nomeDoGrupo)},
     hash: location.hash,
     abriu: Boolean(dialog),
     titulo: dialog?.querySelector('.sheet__title')?.textContent?.trim() || '',
     sobrancelha: dialog?.querySelector('.eyebrow')?.textContent?.trim() || '',
-    corpo: (dialog?.querySelector('.sheet__body')?.innerHTML || '').length,
-    temFrame: Boolean(dialog?.querySelector('.sheet__body iframe, .sheet__body img, .sheet__body object, .sheet__body pre')),
+    // .docx desenha a pagina, .doc vira bloco de texto (.preview-doc), .pdf vai
+    // para a moldura: em qualquer caso o que importa e que o arquivo apareca,
+    // e nao o aviso de formato sem previa.
+    desenhou: Boolean(corpo?.querySelector('.preview-doc, .docx-wrapper, iframe, img, object, pre, audio, video')),
+    temMoldura: Boolean(corpo?.querySelector('iframe, object, embed')),
+    caracteres: texto.length,
+    aviso: /não tem pré-visualização|não dá para|sem prévia/i.test(texto),
   };
 })()`);
-await sleep(1200);
 
 check('clicar no ícone abre a gaveta do arquivo', aberto.abriu, JSON.stringify(aberto));
 check('a gaveta abre com o nome do documento do apontamento', aberto.titulo === aberto.nome, `${aberto.titulo} ≠ ${aberto.nome}`);
-check('a gaveta mostra o arquivo (frame, imagem ou texto)', aberto.temFrame && aberto.corpo > 120, `corpo: ${aberto.corpo}`);
+check(
+  'a gaveta mostra o arquivo (página, texto ou moldura)',
+  // PDF vai para a moldura e não expõe texto no DOM: aí a moldura é a prova.
+  aberto.desenhou && !aberto.aviso && (aberto.caracteres > 100 || aberto.temMoldura),
+  JSON.stringify({ desenhou: aberto.desenhou, caracteres: aberto.caracteres, moldura: aberto.temMoldura, aviso: aberto.aviso })
+);
 check('abrir o arquivo não sai da tela de Apontamentos', aberto.hash === '#/apontamentos', aberto.hash);
 await shot('apontamentos-01-previa');
 
