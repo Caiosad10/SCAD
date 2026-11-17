@@ -27,11 +27,26 @@ git status --short            # deve estar limpo
 
 ## 3. Reiniciar o servidor
 
-O processo de produção roda como SYSTEM: só encerra com administrador.
+O processo de produção roda como **SYSTEM** (tarefa agendada "SCAD Servidor"), então só para com administrador. O caminho curto é o atalho **"SCAD - servidor (administrador)"** na área de trabalho (ou `scad-servidor.cmd` na pasta do projeto): ele pede a elevação e abre um menu.
 
-1. Gerenciador de Tarefas → **Detalhes** → `node.exe` (porta 4177) → *Finalizar tarefa* (aceitar a elevação), **ou** reiniciar a máquina (a tarefa de boot sobe o código novo).
-2. Subir de novo: `iniciar-scad.bat` (ou `scripts\servico-scad.cmd`), na pasta `scad\`.
-3. Sem esse passo o servidor antigo continua em memória e só o cliente novo é servido — a criação de itens falharia até o reinício.
+1. Menu → **[2] Parar o servidor**. A porta 4177 fica livre e a tarefa não reinicia sozinha enquanto estiver parada.
+2. Troque o código (passo 2).
+3. Menu → **[3] Iniciar o servidor**. O menu já mostra a versão, o PID e o dono do processo.
+4. Sem parar/subir, o processo antigo continua em memória e só o cliente novo é servido.
+
+Pelo PowerShell, como administrador:
+
+```powershell
+.\scripts\servidor.ps1             # situacao: tarefa, porta, PID, dono, versao
+.\scripts\servidor.ps1 -Acao parar
+.\scripts\servidor.ps1 -Acao iniciar
+.\scripts\servidor.ps1 -Acao reiniciar
+```
+
+Na primeira vez em cada máquina, `-Acao instalar` faz tudo: para o que estiver na porta, cria/atualiza a tarefa **"SCAD Servidor"** (SYSTEM, ao iniciar a máquina, reinício automático), ajusta a energia para não suspender e sobe. `-Acao remover` desfaz.
+
+> Histórico (17/11/2026): entre 11 e 16/11 o processo rodava de forma avulsa, iniciado à mão, e por isso **não voltava depois de desligar a máquina** — nunca houve tarefa de boot nesse período (a de 16/11 na memória era dedução errada). A tarefa "SCAD Servidor" passa a ser o estado normal.
+
 
 ## 4. Verificar
 
