@@ -207,10 +207,10 @@ export function toast(message, kind = 'ok') {
 
 /* --------------------------------------------------------------- diálogos */
 
-export function openSheet({ title, eyebrow = '', body = '', footer = '', wide = false, onClose = null }) {
+export function openSheet({ title, eyebrow = '', body = '', footer = '', wide = false, className = '', onClose = null }) {
   const host = document.getElementById('dialogs');
   const dialog = document.createElement('dialog');
-  dialog.className = `sheet${wide ? ' sheet--wide' : ''}`;
+  dialog.className = `sheet${wide ? ' sheet--wide' : ''}${className ? ` ${className}` : ''}`;
   dialog.innerHTML =
     `<div class="sheet__grid">` +
     `<div class="sheet__head"><div class="sheet__head-copy">` +

@@ -22,7 +22,7 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const PORT = Number(process.env.PORT || process.argv[2] || 4177);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '2.2.0';
+const VERSION = '2.3.0-dev';
 const MAX_BODY = 48 * 1024 * 1024;
 /* Estados base de check; processos "requirements" adicionam até 2 customizados. */
 
@@ -131,6 +131,53 @@ function processStatuses(process) {
   return [...base, ...normalizeCustomStatuses(process.customStatuses).map((item) => item.id)];
 }
 
+/* ------------------------------------------------- correção e versões */
+
+/** Correção pendente e versões arquivadas compartilham o mesmo formato de arquivo. */
+function normalizeStoredFile(source) {
+  if (!source || typeof source !== 'object') return null;
+  if (typeof source.stored !== 'string' || !source.stored) return null;
+  const file = {
+    stored: source.stored,
+    name: String(source.name || 'arquivo').slice(0, 220),
+    mime: typeof source.mime === 'string' ? source.mime : '',
+    size: Number(source.size) || 0,
+    addedAt: source.addedAt || null,
+    by: source.by || null,
+    byName: source.byName || null,
+  };
+  if (source.replacedAt) file.replacedAt = source.replacedAt;
+  if (source.replacedBy) file.replacedBy = source.replacedBy;
+  if (source.replacedByName) file.replacedByName = source.replacedByName;
+  return file;
+}
+
+function normalizeCorrection(source) {
+  return normalizeStoredFile(source);
+}
+
+function normalizeVersions(list) {
+  return array(list).map((item) => normalizeStoredFile(item)).filter(Boolean);
+}
+
+/** Reabertura da revisão: fica no documento até a próxima aprovação. */
+function normalizeReopen(source) {
+  if (!source || typeof source !== 'object') return null;
+  const reason = typeof source.reason === 'string' ? source.reason.trim().slice(0, 1000) : '';
+  if (!source.at || !reason) return null;
+  return {
+    at: source.at,
+    by: source.by || null,
+    byName: source.byName || null,
+    reason,
+  };
+}
+
+/** v1 é o arquivo atual; cada versão arquivada empurra a correção seguinte em +1. */
+function correctionVersion(doc) {
+  return 2 + array(doc?.versions).length;
+}
+
 function normalizeState(input) {
   const base = emptyState();
   const s = input && typeof input === 'object' ? input : {};
@@ -146,6 +193,9 @@ function normalizeState(input) {
     inactiveReason: typeof doc.inactiveReason === 'string' ? doc.inactiveReason : '',
     itemKind: doc.itemKind === 'item' ? 'item' : 'document',
     itemId: doc.itemId && typeof doc.itemId === 'string' ? doc.itemId : null,
+    correction: normalizeCorrection(doc.correction),
+    versions: normalizeVersions(doc.versions),
+    reopen: normalizeReopen(doc.reopen),
   }));
   const meta = s.meta && typeof s.meta === 'object' ? s.meta : {};
   return {
@@ -432,7 +482,7 @@ function requireReviewer(actor) {
   return actor;
 }
 
-/** Estado de revisão derivado dos checks do documento. */
+/** Estado de revisão derivado dos checks, da correção pendente e da reabertura. */
 function docReview(doc) {
   const checks = state.checks.filter((check) => check.docId === doc.id);
   const done = checks.filter((check) => check.status !== 'pending');
@@ -443,6 +493,9 @@ function docReview(doc) {
   else if (!checks.length) status = 'empty';
   else if (done.length < checks.length) status = 'analysis';
   else if (flagged.length) status = 'attention';
+  // Correção pendente ou revisão reaberta devolvem o documento à revisão mesmo
+  // com todas as verificações aprovadas.
+  else if (doc.correction || doc.reopen) status = 'awaiting';
   else if (approved.length === done.length) status = 'approved';
   else status = 'awaiting';
   return {
@@ -452,6 +505,9 @@ function docReview(doc) {
     approved: approved.length,
     flagged: flagged.length,
     awaiting: Math.max(0, done.length - approved.length - flagged.length),
+    correction: Boolean(doc.correction),
+    reopened: Boolean(doc.reopen),
+    versions: array(doc.versions).length,
   };
 }
 
@@ -1133,15 +1189,102 @@ async function handleApi(req, res, pathname, url) {
         return { rev: state.rev, state: scopedState(doc.processId) };
       });
       for (const item of doomed) {
-        if (!item.stored) continue;
-        try {
-          await fs.unlink(path.join(FILES_DIR, item.stored));
-        } catch {
-          /* arquivo já ausente */
+        const files = [
+          item.stored,
+          item.correction?.stored,
+          ...array(item.versions).map((version) => version.stored),
+        ].filter(Boolean);
+        for (const stored of files) {
+          try {
+            await fs.unlink(path.join(FILES_DIR, stored));
+          } catch {
+            /* arquivo já ausente */
+          }
         }
       }
       return sendJson(res, 200, result);
     }
+  }
+
+  const correctionMatch = pathname.match(/^\/api\/documents\/([^/]+)\/correction$/);
+  if (correctionMatch) {
+    const doc = findDoc(decodeURIComponent(correctionMatch[1]));
+    if (!doc) throw new HttpError(404, 'Documento não encontrado.');
+    if (doc.itemKind === 'item') throw new HttpError(400, 'Item de listagem não tem arquivo para corrigir.');
+    const actor = requestContext.getStore()?.actor || null;
+    if (method === 'POST') {
+      const body = await readJson(req);
+      if (doc.active === false) throw new HttpError(409, 'Documento inativo: reative antes de enviar correção.');
+      if (doc.correction) {
+        throw new HttpError(409, 'Já existe uma correção pendente: remova-a antes de enviar outra.');
+      }
+      const name = text(body.name, 220, 'nome do arquivo');
+      if (typeof body.data !== 'string' || !body.data) throw new HttpError(400, 'Conteúdo do arquivo ausente.');
+      let buffer;
+      try {
+        buffer = Buffer.from(body.data, 'base64');
+      } catch {
+        throw new HttpError(400, 'Não foi possível ler o arquivo enviado.');
+      }
+      if (!buffer.length) throw new HttpError(400, 'Arquivo vazio.');
+      const ext = (name.includes('.') ? name.split('.').pop() : '')
+        .toLowerCase()
+        .replace(/[^.a-z0-9]/g, '')
+        .slice(0, 10);
+      const version = correctionVersion(doc);
+      const stored = `${doc.id}-v${version}-${crypto.randomBytes(4).toString('hex')}${ext ? `.${ext}` : '.bin'}`;
+      try {
+        await fs.writeFile(path.join(FILES_DIR, stored), buffer);
+      } catch (err) {
+        throw new HttpError(500, `Não foi possível gravar o arquivo: ${err.message}`);
+      }
+      const result = await mutate(() => {
+        doc.correction = {
+          stored,
+          name,
+          mime: FILE_MIME[ext] || 'application/octet-stream',
+          size: buffer.length,
+          addedAt: now(),
+          by: actor?.id || null,
+          byName: actor?.name || null,
+        };
+        log(`Correção enviada (v${version}): ${name}${actor ? ` — por ${actor.name}` : ''}`, {
+          processId: doc.processId,
+        });
+        return {
+          rev: state.rev,
+          state: scopedState(doc.processId),
+          correction: doc.correction,
+          review: docReview(doc),
+          activity: scopedActivity(doc.processId, 40),
+        };
+      });
+      return sendJson(res, 201, result);
+    }
+    if (method === 'DELETE') {
+      const correction = doc.correction;
+      if (!correction) throw new HttpError(409, 'Não há correção pendente neste documento.');
+      if (actor && correction.by && actor.id !== correction.by) {
+        throw new HttpError(403, 'Só quem enviou a correção pode removê-la.');
+      }
+      const result = await mutate(() => {
+        doc.correction = null;
+        log(`Correção removida: ${correction.name}`, { processId: doc.processId });
+        return {
+          rev: state.rev,
+          state: scopedState(doc.processId),
+          review: docReview(doc),
+          activity: scopedActivity(doc.processId, 40),
+        };
+      });
+      try {
+        await fs.unlink(path.join(FILES_DIR, correction.stored));
+      } catch {
+        /* arquivo já ausente */
+      }
+      return sendJson(res, 200, result);
+    }
+    throw new HttpError(405, 'Método não permitido.');
   }
 
   const checkIdMatch = pathname.match(/^\/api\/checks\/([^/]+)$/);
@@ -1257,7 +1400,73 @@ async function handleApi(req, res, pathname, url) {
         );
       }
       done.forEach((check) => setReview(check, 'approved', actor, { note: message }));
-      log(`Documento aprovado${message ? `: “${message}”` : ''}: ${doc.name}`, { processId: doc.processId });
+
+      // A correção pendente vira o arquivo atual; o anterior vai para o histórico
+      // de versões. O arquivo antigo nunca é apagado — fica disponível para
+      // comparação a qualquer tempo.
+      const reopened = doc.reopen ? doc.reopen.byName || 'revisor' : null;
+      let promoted = null;
+      if (doc.correction) {
+        const correction = doc.correction;
+        const previous = normalizeStoredFile({
+          stored: doc.stored,
+          name: doc.name,
+          mime: doc.mime,
+          size: doc.size,
+          addedAt: doc.addedAt,
+        });
+        if (previous) {
+          doc.versions = array(doc.versions).concat([
+            {
+              ...previous,
+              replacedAt: now(),
+              replacedBy: actor.id,
+              replacedByName: actor.name,
+            },
+          ]);
+          promoted = array(doc.versions).length + 1;
+        }
+        doc.stored = correction.stored;
+        doc.name = correction.name;
+        doc.mime = correction.mime;
+        doc.size = correction.size;
+        doc.correction = null;
+      }
+      doc.reopen = null;
+
+      const parts = ['Documento aprovado'];
+      if (reopened) parts.push(`revisão reaberta por ${reopened} aprovada`);
+      if (promoted) parts.push(`correção v${promoted} promovida e versão anterior arquivada`);
+      log(`${parts.join(' — ')}${message ? `: “${message}”` : ''}: ${doc.name}`, {
+        processId: doc.processId,
+      });
+      return {
+        rev: state.rev,
+        state: scopedState(doc.processId),
+        review: docReview(doc),
+        activity: scopedActivity(doc.processId, 40),
+      };
+    });
+    return sendJson(res, 200, result);
+  }
+
+  if (pathname === '/api/review/reopen' && method === 'POST') {
+    const body = await readJson(req);
+    const doc = findDoc(String(body.docId || ''));
+    if (!doc) throw new HttpError(404, 'Documento não encontrado.');
+    const actor = requireReviewer(requestContext.getStore()?.actor);
+    const reason = text(body.reason, 1000, 'motivo da reabertura');
+    const result = await mutate(() => {
+      if (doc.active === false) throw new HttpError(409, 'Documento inativo: reative antes de reabrir a revisão.');
+      const review = docReview(doc);
+      if (review.status !== 'approved') {
+        throw new HttpError(409, 'Só é possível reabrir a revisão de um documento aprovado.');
+      }
+      doc.reopen = { at: now(), by: actor.id, byName: actor.name, reason };
+      state.checks
+        .filter((check) => check.docId === doc.id && check.status !== 'pending')
+        .forEach((check) => setReview(check, 'pending', actor, { note: `Reaberto: ${reason}` }));
+      log(`Revisão reaberta por ${actor.name} — motivo: ${reason}`, { processId: doc.processId });
       return {
         rev: state.rev,
         state: scopedState(doc.processId),
@@ -1400,17 +1609,32 @@ async function handleApi(req, res, pathname, url) {
 
 /* --------------------------------------------------------------- arquivos */
 
+/**
+ * Encontra o arquivo pedido em qualquer lugar do documento: arquivo atual,
+ * correção pendente ou versão arquivada (o arquivo antigo continua servível).
+ */
+function fileOwner(stored) {
+  for (const doc of state.documents) {
+    if (doc.stored === stored) return { doc, file: doc };
+    if (doc.correction?.stored === stored) return { doc, file: doc.correction };
+    const version = array(doc.versions).find((item) => item.stored === stored);
+    if (version) return { doc, file: version };
+  }
+  return null;
+}
+
 async function serveFile(req, res, stored) {
-  const doc = state.documents.find((item) => item.stored === stored);
-  if (!doc) throw new HttpError(404, 'Arquivo não encontrado.');
-  const full = path.join(FILES_DIR, doc.stored);
+  const owner = fileOwner(stored);
+  if (!owner) throw new HttpError(404, 'Arquivo não encontrado.');
+  const file = owner.file;
+  const full = path.join(FILES_DIR, stored);
   let stat;
   try {
     stat = await fs.stat(full);
   } catch {
     throw new HttpError(404, 'Arquivo não encontrado no disco.');
   }
-  const mime = doc.mime || FILE_MIME[doc.stored.split('.').pop().toLowerCase()] || 'application/octet-stream';
+  const mime = file.mime || FILE_MIME[stored.split('.').pop().toLowerCase()] || 'application/octet-stream';
   const download = new URL(req.url, 'http://localhost').searchParams.get('download') === '1';
   const INLINE_MIME = new Set([
     'application/pdf',
@@ -1422,7 +1646,7 @@ async function serveFile(req, res, stored) {
     'text/plain; charset=utf-8',
   ]);
   const inline = !download && INLINE_MIME.has(mime);
-  const disposition = `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(doc.name)}`;
+  const disposition = `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name || stored)}`;
   const range = req.headers.range;
 
   if (range) {

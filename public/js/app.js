@@ -28,6 +28,9 @@ import {
   customStatuses,
   statusLabelFor,
   isPointedStatus,
+  correctionVersion,
+  currentVersion,
+  versionsOf,
 } from './store.js';
 import {
   esc,
@@ -1301,7 +1304,7 @@ function showCopyCriteria() {
 
 /* -------------------------------------------------------------- revisão */
 
-function openApproveReview(docId) {
+function openApproveReview(docId, { onDone = null } = {}) {
   const state = getState();
   const doc = docById(state, docId);
   if (!doc) return;
@@ -1318,6 +1321,7 @@ function openApproveReview(docId) {
     toast('Este documento tem sinalizações: o analista precisa corrigir antes de aprovar.', 'err');
     return;
   }
+  const nextVersion = doc.correction ? correctionVersion(doc) : null;
   const dialog = openSheet({
     title: 'Aprovar documento',
     eyebrow: 'Revisão',
@@ -1326,6 +1330,12 @@ function openApproveReview(docId) {
       `<p class="sheet__note">${review.done} verificações serão marcadas como aprovadas${
         review.flagged ? ` — a sinalização de ${review.flagged} critério(s) será substituída pela aprovação` : ''
       }. A mensagem é opcional.</p>` +
+      (doc.correction
+        ? `<p class="sheet__note sheet__note--warn">A correção pendente será promovida a <b>v${nextVersion}</b> e a versão atual fica arquivada para comparação.</p>`
+        : '') +
+      (doc.reopen
+        ? `<p class="sheet__note">Revisão reaberta por ${esc(doc.reopen.byName || 'revisor')}: ${esc(doc.reopen.reason)}</p>`
+        : '') +
       `<div class="field"><label for="review-approve-message">Mensagem <span class="field__optional">opcional</span></label>` +
       `<textarea id="review-approve-message" rows="3" maxlength="2000" placeholder="Ex.: revisado, sem pendências."></textarea></div>`,
     footer:
@@ -1342,7 +1352,8 @@ function openApproveReview(docId) {
       setState(res.state);
       dialog.close();
       renderAll({ preserveScroll: true });
-      toast('Documento aprovado.');
+      toast(doc.correction ? `Documento aprovado — versão v${nextVersion} publicada.` : 'Documento aprovado.');
+      if (typeof onDone === 'function') onDone();
     } catch (err) {
       confirm.disabled = false;
       toast(err.message, 'err');
@@ -1350,7 +1361,7 @@ function openApproveReview(docId) {
   });
 }
 
-function openFlagReview(docId, checkId) {
+function openFlagReview(docId, checkId, { onDone = null } = {}) {
   const state = getState();
   const doc = docById(state, docId);
   const check = (state.checks || []).find((item) => item.id === checkId);
@@ -1397,6 +1408,7 @@ function openFlagReview(docId, checkId) {
       dialog.close();
       renderAll({ preserveScroll: true });
       toast('Critério sinalizado.');
+      if (typeof onDone === 'function') onDone();
     } catch (err) {
       confirm.disabled = false;
       toast(err.message, 'err');
@@ -1534,6 +1546,11 @@ const ACTIONS = {
   },
   'review-approve': (el) => openApproveReview(el.dataset.id),
   'review-flag': (el) => openFlagReview(el.dataset.docId, el.dataset.checkId),
+  'review-reopen': (el) => openReopenReview(el.dataset.id),
+  'correction-add': (el) => openAddCorrection(el.dataset.id),
+  'correction-open': (el) => openCompareCorrection(el.dataset.id),
+  'correction-remove': (el) => removeCorrection(el.dataset.id),
+  'versions-open': (el) => openVersions(el.dataset.id),
   'review-queue': () => {
     ui.queueReview = true;
     ui.queueAll = false;
@@ -1853,60 +1870,493 @@ async function clearNote(id) {
 
 /* ------------------------------------------------------------ documentos */
 
+/**
+ * Corpo da prévia para um arquivo qualquer (atual, correção ou versão).
+ * Devolve `body` já com os hosts e `montar(host)` para os formatos que
+ * precisam de JavaScript (docx desenhado no navegador, .doc em texto).
+ */
+function previewBody(name, mime, url) {
+  const kind = fileKind(name, mime);
+  if (kind === 'pdf') {
+    return {
+      kind,
+      body:
+        `<iframe class="preview-frame" src="${url}#view=FitH" title="Pré-visualização de ${esc(name)}"></iframe>` +
+        `<p class="sheet__note">No iPad, se o PDF não aparecer aqui, use “Abrir em nova aba”.</p>`,
+    };
+  }
+  if (kind === 'image') {
+    return { kind, body: `<img class="preview-image" src="${url}" alt="${esc(name)}" loading="lazy">` };
+  }
+  if (suportaPreviaDocx(name)) {
+    // .docx: o próprio navegador desenha o documento (sem passar pelo servidor).
+    return {
+      kind: 'docx',
+      body:
+        `<div class="preview-docx" data-docx-host></div>` +
+        `<p class="sheet__note">Prévia montada no seu navegador a partir do arquivo original — o layout pode variar um pouco em relação ao Word, e o arquivo em si não é alterado.</p>`,
+      montar: (host) => {
+        const alvo = host?.querySelector?.('[data-docx-host]');
+        if (alvo) montarPreviaDocx(alvo, url, { nome: name });
+      },
+    };
+  }
+  if (ehDocAntigo(name)) {
+    // .doc: o navegador não desenha este formato, mas o texto é legível —
+    // lemos o próprio arquivo aqui e mostramos o conteúdo (sem layout).
+    return {
+      kind: 'doc',
+      body:
+        `<div class="preview-doc" data-doc-text-host></div>` +
+        `<p class="sheet__note" data-doc-note>Prévia em <b>texto</b> — o formato .doc não guarda o layout para o navegador. ` +
+        `O texto é o do documento inteiro, na ordem; imagens e tabelas não aparecem como no Word.</p>`,
+      montar: (host) => {
+        const alvo = host?.querySelector?.('[data-doc-text-host]');
+        const nota = host?.querySelector?.('[data-doc-note]');
+        if (alvo) montarPreviaDoc(alvo, url, { nome: name, nota });
+      },
+    };
+  }
+  return {
+    kind: 'file',
+    body:
+      `<div class="preview-fallback">${icon('file', 22)}` +
+      `<p>Este formato não tem pré-visualização no navegador. Abra ou baixe o arquivo.</p></div>`,
+  };
+}
+
+/** Abre a prévia de um arquivo armazenado qualquer (documento, correção, versão). */
+function openStoredPreview({ name, mime, size, stored, eyebrowLabel = null }) {
+  const url = api.fileUrl(stored);
+  const view = previewBody(name, mime, url);
+  const dialog = openSheet({
+    title: name,
+    eyebrow: eyebrowLabel || `${fileKindLabel(view.kind)}${size ? ` · ${fmtBytes(size)}` : ''}`,
+    body: view.body,
+    wide: true,
+    footer:
+      `<a class="btn btn--secondary" href="${url}" target="_blank" rel="noopener">${icon('external', 15)} Abrir em nova aba</a>` +
+      `<a class="btn btn--primary" href="${url}?download=1" download>${icon('download', 15)} Baixar</a>`,
+  });
+  view.montar?.(dialog);
+  return dialog;
+}
+
 function openPreview(docId) {
   const doc = docById(getState(), docId);
   if (!doc) return;
-  const url = api.fileUrl(doc.stored);
-  const kind = isItemDoc(doc) ? 'item' : fileKind(doc.name, doc.mime);
-  let body;
-  let montar = null;
-  if (kind === 'item') {
-    body = `<div class="preview-fallback">${icon('list', 22)}` +
-      `<p>Este é um item da listagem — ele reúne as evidências de cada critério. Abra uma evidência para ver o arquivo.</p></div>`;
-  } else if (kind === 'pdf') {
-    body =
-      `<iframe class="preview-frame" src="${url}#view=FitH" title="Pré-visualização de ${esc(doc.name)}"></iframe>` +
-      `<p class="sheet__note">No iPad, se o PDF não aparecer aqui, use “Abrir em nova aba”.</p>`;
-  } else if (kind === 'image') {
-    body = `<img class="preview-image" src="${url}" alt="${esc(doc.name)}" loading="lazy">`;
-  } else if (suportaPreviaDocx(doc.name)) {
-    // .docx: o próprio navegador desenha o documento (sem passar pelo servidor).
-    body =
-      `<div class="preview-docx" data-docx-host></div>` +
-      `<p class="sheet__note">Prévia montada no seu navegador a partir do arquivo original — o layout pode variar um pouco em relação ao Word, e o arquivo em si não é alterado.</p>`;
-    montar = (dialog) => {
-      const alvo = dialog.querySelector('[data-docx-host]');
-      if (alvo) montarPreviaDocx(alvo, url, { nome: doc.name });
-    };
-  } else if (ehDocAntigo(doc.name)) {
-    // .doc: o navegador não desenha este formato, mas o texto é legível —
-    // lemos o próprio arquivo aqui e mostramos o conteúdo (sem layout).
-    body =
-      `<div class="preview-doc" data-doc-text-host></div>` +
-      `<p class="sheet__note" data-doc-note>Prévia em <b>texto</b> — o formato .doc não guarda o layout para o navegador. ` +
-      `O texto é o do documento inteiro, na ordem; imagens e tabelas não aparecem como no Word.</p>`;
-    montar = (dialog) => {
-      const alvo = dialog.querySelector('[data-doc-text-host]');
-      const nota = dialog.querySelector('[data-doc-note]');
-      if (alvo) montarPreviaDoc(alvo, url, { nome: doc.name, nota });
-    };
-  } else {
-    body =
-      `<div class="preview-fallback">${icon('file', 22)}` +
-      `<p>Este formato não tem pré-visualização no navegador. Abra ou baixe o arquivo.</p></div>`;
+  if (isItemDoc(doc)) {
+    openSheet({
+      title: doc.name,
+      eyebrow: fileKindLabel('item'),
+      body:
+        `<div class="preview-fallback">${icon('list', 22)}` +
+        `<p>Este é um item da listagem — ele reúne as evidências de cada critério. Abra uma evidência para ver o arquivo.</p></div>`,
+      wide: true,
+      footer: `<button type="button" class="btn btn--primary" data-close>Fechar</button>`,
+    });
+    return;
   }
+  openStoredPreview({ name: doc.name, mime: doc.mime, size: doc.size, stored: doc.stored });
+}
+
+/* ------------------------------------------------- correção e versões */
+
+/** Painel de critérios usado na comparação da correção. */
+function criteriaPanelHtml(state, doc) {
+  const criteria = criteriaSorted(state);
+  const criterionById = new Map(criteria.map((item) => [item.id, item]));
+  const checks = (state.checks || [])
+    .filter((check) => check.docId === doc.id && criterionById.has(check.criterionId))
+    .sort((a, b) => (criterionById.get(a.criterionId)?.order || 0) - (criterionById.get(b.criterionId)?.order || 0));
+  const reviewer = currentProfile(state)?.role === 'reviewer';
+  if (!checks.length) return '<p class="sheet__note">Este documento ainda não tem verificações.</p>';
+  return checks
+    .map((check) => {
+      const criterion = criterionById.get(check.criterionId);
+      const review = checkReview(check);
+      const stampClass =
+        check.status === 'ok'
+          ? 'stamp--ok'
+          : check.status === 'nc'
+            ? 'stamp--nc'
+            : check.status === 'obs'
+              ? 'stamp--obs'
+              : 'stamp--pending';
+      const chip =
+        review === 'approved'
+          ? '<span class="review-chip review-chip--ok">aprovada</span>'
+          : review === 'flagged'
+            ? '<span class="review-chip review-chip--flag">sinalizada</span>'
+            : '<span class="review-chip">aguardando</span>';
+      return (
+        `<div class="compare__criterion">` +
+        `<div class="compare__criterion-top"><span class="compare__criterion-label">${esc(criterion.label)}</span>` +
+        `<span class="stamp ${stampClass}">${esc(statusLabelFor(state, check.status))}</span></div>` +
+        ((check.note || '').trim() ? `<p class="compare__criterion-note">${esc(check.note)}</p>` : '') +
+        `<div class="compare__criterion-foot">${chip}` +
+        (reviewer && check.status !== 'pending'
+          ? `<button type="button" class="btn btn--ghost btn--sm" data-compare-flag="${esc(check.id)}">${icon(
+              'flag',
+              13
+            )} Sinalizar</button>`
+          : '') +
+        `</div></div>`
+      );
+    })
+    .join('');
+}
+
+/** Comparação antes/depois da correção pendente, com o painel de critérios. */
+function openCompareCorrection(docId) {
+  const state = getState();
+  const doc = docById(state, docId);
+  if (!doc) return;
+  if (!doc.correction) {
+    toast('Este documento não tem correção pendente.', 'err');
+    return;
+  }
+  const reviewer = currentProfile(state)?.role === 'reviewer';
+  const review = reviewOfDoc(state, doc.id);
+  const correction = doc.correction;
+  const version = correctionVersion(doc);
+  const originalView = previewBody(doc.name, doc.mime, api.fileUrl(doc.stored));
+  const correctedView = previewBody(correction.name, correction.mime, api.fileUrl(correction.stored));
+  const canApproveNow = reviewer && review.status === 'awaiting';
+  const mine = currentProfile(state)?.id === correction.by;
   const dialog = openSheet({
     title: doc.name,
-    eyebrow: `${fileKindLabel(kind)}${kind === 'item' ? '' : ` · ${fmtBytes(doc.size)}`}`,
-    body,
-    wide: true,
+    eyebrow: `Comparação · correção v${version}`,
+    className: 'sheet--compare',
+    body:
+      `<div class="compare" data-view="corrected">` +
+      `<div class="compare__toolbar">` +
+      `<div class="segmented compare__switch" role="group" aria-label="O que visualizar">` +
+      `<button type="button" data-compare-view="original" aria-pressed="false">Original</button>` +
+      `<button type="button" data-compare-view="corrected" aria-pressed="true">Corrigido · v${version}</button>` +
+      `<button type="button" data-compare-view="criteria" aria-pressed="false">Critérios</button>` +
+      `</div>` +
+      `<span class="compare__meta">${esc(correction.byName || 'alguém')} · ${esc(
+        fmtDate(correction.addedAt)
+      )} · ${fmtBytes(correction.size)}</span></div>` +
+      `<div class="compare__grid">` +
+      `<section class="compare__pane" data-compare-pane="original">` +
+      `<header class="compare__pane-head">Original · v${currentVersion(doc)}` +
+      `<span>${esc(doc.name)} · ${fmtBytes(doc.size)}</span></header>` +
+      `<div class="compare__preview" data-preview-host="original">${originalView.body}</div></section>` +
+      `<section class="compare__pane" data-compare-pane="corrected">` +
+      `<header class="compare__pane-head compare__pane-head--new">Corrigido · v${version}` +
+      `<span>${esc(correction.name)} · ${fmtBytes(correction.size)}</span></header>` +
+      `<div class="compare__preview" data-preview-host="corrected">${correctedView.body}</div></section>` +
+      `<aside class="compare__criteria" data-compare-pane="criteria">` +
+      `<header class="compare__pane-head">Critérios<span>${review.approved}/${review.done} aprovados</span></header>` +
+      `<div class="compare__criteria-list">${criteriaPanelHtml(state, doc)}</div></aside>` +
+      `</div></div>`,
     footer:
-      kind === 'item'
-        ? `<button type="button" class="btn btn--primary" data-close>Fechar</button>`
-        : `<a class="btn btn--secondary" href="${url}" target="_blank" rel="noopener">${icon('external', 15)} Abrir em nova aba</a>` +
-          `<a class="btn btn--primary" href="${url}?download=1" download>${icon('download', 15)} Baixar</a>`,
+      `<button type="button" class="btn btn--ghost" data-close>Fechar</button>` +
+      (mine
+        ? `<button type="button" class="btn btn--danger" data-compare-remove>${icon('trash', 14)} Remover correção</button>`
+        : '') +
+      `<span class="sheet__foot-spacer"></span>` +
+      `<a class="btn btn--secondary" href="${api.fileUrl(correction.stored)}" target="_blank" rel="noopener">${icon(
+        'external',
+        15
+      )} Abrir corrigido</a>` +
+      (canApproveNow
+        ? `<button type="button" class="btn btn--primary" data-compare-approve>${icon(
+            'check',
+            15
+          )} Aprovar documento</button>`
+        : ''),
   });
-  if (montar) montar(dialog);
+  originalView.montar?.(dialog.querySelector('[data-preview-host="original"]'));
+  correctedView.montar?.(dialog.querySelector('[data-preview-host="corrected"]'));
+
+  const setView = (view) => {
+    dialog.querySelectorAll('[data-compare-view]').forEach((btn) => {
+      btn.setAttribute('aria-pressed', String(btn.dataset.compareView === view));
+    });
+    dialog.querySelector('.compare')?.setAttribute('data-view', view);
+  };
+  dialog.querySelectorAll('[data-compare-view]').forEach((btn) =>
+    btn.addEventListener('click', () => setView(btn.dataset.compareView))
+  );
+
+  const bindFlagButtons = () => {
+    dialog.querySelectorAll('[data-compare-flag]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        openFlagReview(doc.id, btn.dataset.compareFlag, {
+          onDone: () => {
+            const next = docById(getState(), doc.id);
+            const list = dialog.querySelector('.compare__criteria-list');
+            if (next && list) {
+              list.innerHTML = criteriaPanelHtml(getState(), next);
+              bindFlagButtons();
+            }
+          },
+        });
+      })
+    );
+  };
+  bindFlagButtons();
+
+  dialog.querySelector('[data-compare-approve]')?.addEventListener('click', () =>
+    openApproveReview(doc.id, { onDone: () => dialog.close() })
+  );
+  dialog.querySelector('[data-compare-remove]')?.addEventListener('click', () =>
+    removeCorrection(doc.id, dialog)
+  );
+  return dialog;
+}
+
+/** Envia a nova versão do arquivo (a atual vira histórico na aprovação). */
+function openAddCorrection(docId) {
+  const state = getState();
+  const doc = docById(state, docId);
+  if (!doc) return;
+  if (doc.itemKind === 'item') {
+    toast('Itens de listagem não têm arquivo próprio — corrija uma evidência.', 'err');
+    return;
+  }
+  if (doc.correction) {
+    openCompareCorrection(doc.id);
+    return;
+  }
+  if (doc.active === false) {
+    toast('Documento inativo: reative antes de enviar correção.', 'err');
+    return;
+  }
+  const version = correctionVersion(doc);
+  let selected = null;
+  let objectUrl = null;
+  const dialog = openSheet({
+    title: 'Adicionar correção',
+    eyebrow: `Documento · correção v${version}`,
+    body:
+      `<p class="sheet__note">Envie a nova versão do arquivo corrigido. A versão atual continua disponível para comparação — nada é apagado.</p>` +
+      `<div class="field"><label for="correction-name">Nome do documento</label>` +
+      `<input id="correction-name" type="text" maxlength="220" value="${esc(doc.name)}" autocomplete="off"></div>` +
+      `<div class="dropzone" id="correction-dropzone" role="button" tabindex="0" aria-label="Selecionar o arquivo corrigido">` +
+      `<span class="dropzone__icon">${icon('upload', 19)}</span>` +
+      `<strong>Arraste o arquivo corrigido ou toque para selecionar</strong>` +
+      `<span>PDF, imagens, planilhas e documentos · até 32 MB</span>` +
+      `<span>Versão atual: ${esc(doc.name)} · ${fmtBytes(doc.size)}</span></div>` +
+      `<input type="file" id="correction-file" class="sr-only" ` +
+      `accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.heic,.doc,.docx,.xls,.xlsx,.csv,.txt">` +
+      `<div class="correction-selected" id="correction-selected" hidden></div>` +
+      `<div class="correction-preview" id="correction-preview"></div>`,
+    footer:
+      `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
+      `<button type="button" class="btn btn--primary" data-confirm disabled>${icon(
+        'upload',
+        15
+      )} Enviar correção v${version}</button>`,
+    onClose: () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    },
+  });
+  const input = dialog.querySelector('#correction-file');
+  const dropzone = dialog.querySelector('#correction-dropzone');
+  const selectedHost = dialog.querySelector('#correction-selected');
+  const previewHost = dialog.querySelector('#correction-preview');
+  const confirm = dialog.querySelector('[data-confirm]');
+  dialog.querySelector('[data-cancel]')?.addEventListener('click', () => dialog.close());
+
+  const select = (file) => {
+    if (!file) return;
+    if (file.size > MAX_UPLOAD) {
+      toast(`Arquivo acima de 32 MB (${fmtBytes(file.size)}).`, 'err');
+      return;
+    }
+    selected = file;
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = URL.createObjectURL(file);
+    selectedHost.hidden = false;
+    selectedHost.innerHTML =
+      `${icon('file', 14)} <span class="correction-selected__name">${esc(file.name)}</span>` +
+      `<span class="correction-selected__size">${fmtBytes(file.size)}</span>`;
+    const view = previewBody(file.name, file.type, objectUrl);
+    previewHost.innerHTML = `<div class="correction-preview__body">${view.body}</div>`;
+    view.montar?.(previewHost.querySelector('.correction-preview__body'));
+    confirm.disabled = false;
+  };
+
+  input?.addEventListener('change', () => select(input.files?.[0]));
+  dropzone?.addEventListener('click', () => input?.click());
+  dropzone?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      input?.click();
+    }
+  });
+  dropzone?.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dropzone.classList.add('dropzone--over');
+  });
+  dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('dropzone--over'));
+  dropzone?.addEventListener('drop', (event) => {
+    event.preventDefault();
+    dropzone.classList.remove('dropzone--over');
+    select(event.dataTransfer?.files?.[0]);
+  });
+
+  confirm?.addEventListener('click', async () => {
+    if (!selected) return;
+    const name = (dialog.querySelector('#correction-name')?.value || '').trim() || selected.name;
+    confirm.disabled = true;
+    try {
+      const data = await readBase64(selected);
+      const res = await api.addCorrection(doc.id, { name, data });
+      setState(res.state);
+      dialog.close();
+      renderAll({ preserveScroll: true });
+      toast(`Correção v${version} enviada — aguardando revisão.`);
+      openCompareCorrection(doc.id);
+    } catch (err) {
+      confirm.disabled = false;
+      toast(err.message, 'err');
+    }
+  });
+}
+
+/** Histórico de versões: arquivo atual e todas as versões arquivadas. */
+function openVersions(docId) {
+  const state = getState();
+  const doc = docById(state, docId);
+  if (!doc) return;
+  const versions = versionsOf(doc);
+  if (!versions.length) {
+    toast('Este documento ainda não tem outras versões.');
+    return;
+  }
+  const total = 1 + versions.length;
+  const rows = versions
+    .map((version, index) => {
+      const number = index + 1;
+      return (
+        `<button type="button" class="version-row" data-version-open="${esc(version.stored)}" ` +
+        `data-version-name="${esc(version.name)}" data-version-mime="${esc(version.mime || '')}" ` +
+        `data-version-size="${Number(version.size) || 0}">` +
+        `<span class="version-row__num">v${number}</span>` +
+        `<span class="version-row__copy"><strong>${esc(version.name)}</strong>` +
+        `<span>${fmtBytes(version.size)} · arquivada em ${esc(
+          fmtDate(version.replacedAt || version.addedAt)
+        )}${version.replacedByName ? ` por ${esc(version.replacedByName)}` : ''}</span></span>` +
+        `${icon('chevronRight', 16)}</button>`
+      );
+    })
+    .join('');
+  const currentRow =
+    `<div class="version-row version-row--current">` +
+    `<span class="version-row__num">v${total}</span>` +
+    `<span class="version-row__copy"><strong>${esc(doc.name)}</strong>` +
+    `<span>${fmtBytes(doc.size)} · versão vigente</span></span>` +
+    `<span class="stamp stamp--ok">Atual</span></div>`;
+  const dialog = openSheet({
+    title: 'Versões do documento',
+    eyebrow: `${doc.name} · ${total} versões`,
+    body:
+      `<p class="sheet__note">O arquivo antigo nunca é apagado: a comparação fica disponível a qualquer tempo.</p>` +
+      `<div class="version-list">${rows}${currentRow}</div>`,
+    footer: `<button type="button" class="btn btn--primary" data-close>Fechar</button>`,
+  });
+  dialog.querySelectorAll('[data-version-open]').forEach((btn) =>
+    btn.addEventListener('click', () =>
+      openStoredPreview({
+        name: btn.dataset.versionName,
+        mime: btn.dataset.versionMime,
+        size: Number(btn.dataset.versionSize) || 0,
+        stored: btn.dataset.versionOpen,
+        eyebrowLabel: `Versão arquivada · ${fmtBytes(Number(btn.dataset.versionSize) || 0)}`,
+      })
+    )
+  );
+}
+
+/** Reabertura da revisão de um documento já aprovado (só o revisor). */
+function openReopenReview(docId) {
+  const state = getState();
+  const doc = docById(state, docId);
+  if (!doc) return;
+  if (currentProfile(state)?.role !== 'reviewer') {
+    toast('Apenas o revisor (Diogenes) reabre uma revisão.', 'err');
+    return;
+  }
+  if (reviewOfDoc(state, doc.id).status !== 'approved') {
+    toast('Só é possível reabrir um documento já aprovado.', 'err');
+    return;
+  }
+  const dialog = openSheet({
+    title: 'Reabrir revisão',
+    eyebrow: `Revisão · v${currentVersion(doc)}`,
+    body:
+      `<p class="sheet-message">${esc(doc.name)}</p>` +
+      `<p class="sheet__note">O documento volta para a fila de revisão e as verificações precisam ser aprovadas de novo. ` +
+      `Use quando precisar corrigir algo que já foi aprovado — um erro seu, uma ideia melhor ou um apontamento de auditoria.</p>` +
+      `<div class="field"><label for="reopen-reason">Motivo da reabertura</label>` +
+      `<textarea id="reopen-reason" rows="3" maxlength="1000" placeholder="Ex.: auditoria apontou divergência na cláusula 4.2."></textarea>` +
+      `<p class="field__hint" data-reopen-hint>O motivo fica registrado na atividade do documento.</p></div>`,
+    footer:
+      `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
+      `<button type="button" class="btn btn--primary" data-confirm disabled>${icon(
+        'arrowLeft',
+        15
+      )} Reabrir revisão</button>`,
+  });
+  const area = dialog.querySelector('#reopen-reason');
+  const confirm = dialog.querySelector('[data-confirm]');
+  const hint = dialog.querySelector('[data-reopen-hint]');
+  area?.addEventListener('input', () => {
+    const ok = (area.value || '').trim().length >= 5;
+    confirm.disabled = !ok;
+    if (hint) {
+      hint.textContent = ok
+        ? 'O motivo fica registrado na atividade do documento.'
+        : 'Escreva ao menos uma frase explicando o motivo.';
+    }
+  });
+  dialog.querySelector('[data-cancel]')?.addEventListener('click', () => dialog.close());
+  confirm?.addEventListener('click', async () => {
+    const reason = (area?.value || '').trim();
+    if (!reason) return;
+    confirm.disabled = true;
+    try {
+      const res = await api.reopenReview(doc.id, reason);
+      setState(res.state);
+      dialog.close();
+      renderAll({ preserveScroll: true });
+      toast('Revisão reaberta — o documento voltou para a fila de revisão.');
+    } catch (err) {
+      confirm.disabled = false;
+      toast(err.message, 'err');
+    }
+  });
+  setTimeout(() => area?.focus(), 80);
+}
+
+/** Remove a correção pendente (só quem enviou). */
+async function removeCorrection(docId, sourceDialog = null) {
+  const state = getState();
+  const doc = docById(state, docId);
+  if (!doc?.correction) return;
+  const ok = await confirmSheet({
+    title: 'Remover correção?',
+    message:
+      `<b>${esc(doc.correction.name)}</b> será descartada e o documento continua na versão atual ` +
+      `(v${currentVersion(doc)}). O arquivo enviado é apagado.`,
+    confirmLabel: 'Remover correção',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const res = await api.removeCorrection(doc.id);
+    setState(res.state);
+    sourceDialog?.close();
+    renderAll({ preserveScroll: true });
+    toast('Correção removida.');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
 }
 
 function renameDoc(docId) {

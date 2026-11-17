@@ -504,3 +504,65 @@ Levantamento feito no código já em produção (nada implementado ainda):
 5. **Primeira prévia espera as bibliotecas** (172 KB de jszip + docx-preview). Baixá-las em segundo plano (`requestIdleCallback`) depois que a lista carrega deixa a abertura instantânea no PC; em acesso remoto custa dados, então só faz sentido com a otimização de gzip que está no backlog.
 6. **Zoom e tela cheia na prévia do .docx.** Hoje a página é reduzida automaticamente para caber (zoom mínimo 0,25); não há como ampliar nem usar a gaveta inteira. Em iPad, "expandir" resolve leitura de documento denso.
 7. **Prévia ao lado da verificação (ideia maior).** O fluxo real é ler o POP e responder os critérios; hoje a prévia abre por cima e cobre a tela. Um modo dividido (documento de um lado, critérios do outro) é o ganho grande de produtividade, mas é mudança de tela, não de prévia.
+
+### 20. Correção com versionamento e reabertura de revisão (v2.3, em validação — 2026-11-17)
+
+**Numeração:** esta cópia de dev não tem a seção 19 da `master` (incidente do servidor fora do ar em 17/11); na hora do merge as duas convivem.
+
+**Estado:** implementado no worktree `scad-v2` (branch `fase-a`, servidor de teste na **4188**, dados copiados da produção em `.qa-correcao/`). A produção em `scad` (`master`, 4177, v2.2.0) segue intocada — nada desta seção existe lá. Só vai para produção depois da validação do Sergio.
+
+**Origem (CAPA):** quando a auditoria ou o próprio revisor encontra algo num documento já aprovado, hoje sobram dois caminhos ruins: excluir e reimportar (perde histórico) ou "dar a autoridade de revisar ao analista" (não é o papel dele). A decisão do usuário foi manter a autoridade no revisor: **o analista envia a versão corrigida e o revisor aprova a nova versão**; e o revisor pode **reabrir** um documento aprovado dizendo o motivo.
+
+#### 20.1 Como o fluxo ficou
+
+| Passo | Quem | O que acontece |
+|---|---|---|
+| 1. Enviar correção | analista | Na página do documento (ou na bancada), "Adicionar correção" abre uma gaveta com arrastar-e-soltar. O arquivo novo fica **pendente**; o vigente continua no ar e o documento passa a "aguardando". |
+| 2. Comparar e aprovar | revisor | "Visualizar correção" abre a **gaveta de comparação** com o antes, o depois e os critérios da última análise (dá para sinalizar um critério dali mesmo, com mensagem). O botão "Aprovar documento" promove a correção a versão nova e arquiva a anterior. |
+| 3. Reabrir revisão | revisor | Em documento **aprovado**, "Reabrir revisão" exige **motivo** (até 1000 caracteres); as verificações voltam a "aguardando" mantendo os resultados, e a faixa mostra quem reabriu, quando e por quê. O analista ajusta e o revisor aprova de novo. |
+
+O arquivo antigo **nunca é apagado**: fica em `versions[]` e continua abrível pela gaveta "Versões" (`v1`, `v2`, … com a vigente marcada como "Atual").
+
+#### 20.2 Modelo de dados (schema v2, aditivo)
+
+| Campo | Onde | Regra |
+|---|---|---|
+| `document.correction` | documento | `{stored, name, mime, size, addedAt, by, byName}` — no máximo **uma** pendente. |
+| `document.versions[]` | documento | Arquivos substituídos: mesmos campos + `replacedAt`, `replacedBy`, `replacedByName`. Guardados em `data/files` como `${docId}-v${n}-${hex}.${ext}`. |
+| `document.reopen` | documento | `{at, by, byName, reason}` — motivo obrigatório; some na aprovação seguinte. |
+| `review` (derivado) | documento | `docReview` passou a devolver `correction`, `reopened` e `versions`; documento com correção pendente ou reaberto aparece como **`awaiting`**. |
+
+Ordem do selo na lista e no documento: inativo → aprovado → atenção → **corrigido · vN** → **reaberta** → aguardando → apontado → verificado. Versionamento derivado: `currentVersion = 1 + versions.length`, `correctionVersion = 2 + versions.length`.
+
+#### 20.3 API
+
+- `POST /api/documents/:id/correction` `{name, data}` (base64) → **201** `{rev, state, correction, review, activity}`; recusa item de listagem (400), documento inativo (409) e correção já pendente (409).
+- `DELETE /api/documents/:id/correction` → só **quem enviou** remove (403 caso contrário); apaga o arquivo do disco.
+- `POST /api/review/approve` → quando há correção, na mesma gravação: empurra o arquivo vigente para `versions` com `replacedAt/replacedBy/ByName`, promove a correção a vigente e limpa `correction` + `reopen`. A atividade diz "… correção vN promovida e versão anterior arquivada".
+- `POST /api/review/reopen` `{docId, reason}` → **só revisor**, **só documento aprovado** (409), motivo obrigatório (400). Zera `review` das verificações não pendentes (o resultado `ok/nc/obs` é preservado) e registra a atividade.
+- `GET /files/:stored` → passou a resolver o arquivo **atual, a correção pendente e as versões arquivadas** (`fileOwner`); antes só o arquivo vigente era servido, então o histórico daria 404.
+- `DELETE /api/documents/:id` → apaga também o arquivo da correção e todas as versões.
+
+#### 20.4 Telas
+
+- **Página do documento:** faixa de correção (arquivo, tamanho, autor, data + dica para o revisor) e faixa de reabertura (motivo + autor + data); ações "Visualizar correção"/"Adicionar correção", "Reabrir revisão" (revisor) e "Versões: v1, v2".
+- **Gaveta de comparação** (`sheet--compare`, até 1320 px): três painéis — **original**, **corrigido** e **critérios** com o selo e a mensagem da última análise; rodapé com Fechar, "Remover correção" (autor), "Abrir corrigido" e "Aprovar documento" (revisor). Abaixo de 1100 px os painéis viram **abas** (`Original · Corrigido · Critérios`).
+- **Gaveta "Adicionar correção":** dropzone com anexo por clique, prévia local antes de enviar, nome pré-preenchido e botão "Enviar correção vN" bloqueado até haver arquivo.
+- **Gaveta "Versões":** cada versão abre na prévia (PDF, .docx, .doc em texto, imagem); a vigente aparece como "Atual".
+- **Bancada:** com correção pendente o cartão de conclusão muda para "Correção enviada" com a ação "Visualizar correção".
+- **Lista de documentos:** selo "Corrigido · vN" e "Reaberta".
+
+#### 20.5 Como foi verificado (4188, dados copiados da produção)
+
+- `node --check` em `server.mjs` e nos 9 módulos do cliente.
+- **API** (`scripts/correctiontest.mjs`): **51 asserções**, todas passando — envio, bloqueio de segunda correção, remoção só pelo autor, 403 de revisor/analista nos papéis trocados, promoção com versão arquivada servida (200), versões em ordem, reabertura sem motivo (400), reabertura por analista (403), checks voltando a "aguardando" com o resultado preservado, reaprovação limpando `reopen`, documento inativo (409), item de listagem (400) e exclusão com arquivos apagados (404).
+- **Interface** (`scripts/correctionui.mjs`, Edge headless por CDP): **30 asserções**, todas passando — selo na lista, faixas, comparação com as três colunas (1440 px), abas e troca de painel (820 px), gaveta de versões fechando, gaveta de correção com envio bloqueado, aprovação pela comparação, reabertura com motivo e selo "Reaberta". **Zero exceção de JavaScript.**
+- **Regressão:** `scripts/reviewtest.mjs` (24 asserções do fluxo de revisão e presença) passou inteiro sobre um documento com correção pendente; `scripts/reviewui.mjs` passou 26 de 28 — as duas falhas são as de **presença na matriz**, que dependem da sincronia de 12 s (o teste faz o POST e lê a matriz antes do próximo batimento); código de presença não foi tocado nesta rodada.
+- Limpeza: `scripts/qapreparecorrecao.mjs` deixa o cenário pronto (uma versão arquivada + uma correção pendente + um documento aprovado extra).
+
+#### 20.6 Pendências desta rodada
+
+1. Validação visual do Sergio em `http://localhost:4188` (as capturas estão em `shots/correcao-*.png`).
+2. Commit no `fase-a` (feito nesta rodada); merge/deploy só com OK explícito.
+3. `scripts/smoke.mjs` e `scripts/qa.mjs` são da v1 (`/api/process`, `/api/state` sem processo) — não servem de rede de segurança para a v2; ou atualizam, ou saem do repositório.
+4. O módulo **Controle de Validade** (contagem de validade de documentos, decidido em 17/11) continua no backlog do Kanban, fora desta entrega.

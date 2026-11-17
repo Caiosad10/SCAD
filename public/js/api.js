@@ -70,6 +70,8 @@ export const api = {
   addItem: (pid, payload) => request('POST', '/api/items', { processId: pid, ...payload }),
   updateDocument: (id, payload) => request('PATCH', `/api/documents/${encodeURIComponent(id)}`, payload),
   deleteDocument: (id) => request('DELETE', `/api/documents/${encodeURIComponent(id)}`),
+  addCorrection: (id, payload) => request('POST', `/api/documents/${encodeURIComponent(id)}/correction`, payload),
+  removeCorrection: (id) => request('DELETE', `/api/documents/${encodeURIComponent(id)}/correction`),
 
   updateCheck: (id, patch) => request('PATCH', `/api/checks/${encodeURIComponent(id)}`, patch),
   setMeta: (pid, payload) => request('POST', '/api/meta', { processId: pid, ...payload }),
@@ -77,6 +79,7 @@ export const api = {
   approveReview: (docId, message = '') => request('POST', '/api/review/approve', { docId, message }),
   flagReview: (docId, checkId, message, checkVersion) =>
     request('POST', '/api/review/flag', { docId, checkId, message, checkVersion }),
+  reopenReview: (docId, reason) => request('POST', '/api/review/reopen', { docId, reason }),
   presence: (docId) => request('POST', '/api/presence', { docId }),
 
   reset: () => request('POST', '/api/reset', { confirm: true }),

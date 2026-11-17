@@ -13,6 +13,7 @@ import {
   statusLabelFor,
   isItemDoc,
   isPointedStatus,
+  correctionVersion,
 } from '../store.js';
 
 export function showNoteFor(check, state = null) {
@@ -33,6 +34,8 @@ export function docTagHtml(state, doc) {
   const st = docStats(state, doc.id);
   if (review.status === 'approved') return stamp('ok', { label: 'Aprovado' });
   if (review.status === 'attention') return stamp('nc', { label: 'Atenção' });
+  if (doc.correction) return stamp('pending', { label: `Corrigido · v${correctionVersion(doc)}` });
+  if (review.reopened) return stamp('pending', { label: 'Reaberta' });
   if (review.status === 'awaiting') return stamp('pending', { label: 'Aguardando revisão' });
   if (st.pointed) return stamp('nc', { label: 'Apontamento' });
   if (st.total && st.pending === 0) return stamp('ok', { label: 'Verificado' });

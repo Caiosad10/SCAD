@@ -372,6 +372,8 @@ export function reviewOfDoc(s, docId) {
   else if (!checks.length) status = 'empty';
   else if (done.length < checks.length) status = 'analysis';
   else if (flagged.length) status = 'attention';
+  // Correção pendente ou revisão reaberta devolvem o documento à revisão.
+  else if (doc?.correction || doc?.reopen) status = 'awaiting';
   else if (approved.length === done.length) status = 'approved';
   else status = 'awaiting';
   return {
@@ -381,7 +383,30 @@ export function reviewOfDoc(s, docId) {
     approved: approved.length,
     flagged: flagged.length,
     awaiting: Math.max(0, done.length - approved.length - flagged.length),
+    correction: Boolean(doc?.correction),
+    reopened: Boolean(doc?.reopen),
+    versions: versionsOf(doc).length,
   };
+}
+
+/* ------------------------------------------------- correção e versões */
+
+export function correctionOf(doc) {
+  return doc?.correction || null;
+}
+
+export function versionsOf(doc) {
+  return Array.isArray(doc?.versions) ? doc.versions : [];
+}
+
+/** v1 é o arquivo atual; cada versão arquivada empurra a correção seguinte em +1. */
+export function correctionVersion(doc) {
+  return 2 + versionsOf(doc).length;
+}
+
+/** Número da versão vigente (v1 sem histórico, v2 após a primeira promoção). */
+export function currentVersion(doc) {
+  return 1 + versionsOf(doc).length;
 }
 
 export function reviewQueueItems(s) {

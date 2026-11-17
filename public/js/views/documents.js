@@ -25,8 +25,11 @@ import {
   isItemDoc,
   childDocuments,
   statusLabelFor,
+  correctionVersion,
+  versionsOf,
 } from '../store.js';
 import { renderChecks, docTagHtml } from './checks.js';
+import { correctionActionsHtml, versionsButtonHtml, correctionPillHtml } from './correction.js';
 
 /** Lista principal (sem as evidências-filhas presas a um item). */
 export function listableDocuments(state) {
@@ -49,6 +52,8 @@ function docStamp(state, doc) {
   const st = docStats(state, doc.id);
   if (review.status === 'approved') return stamp('ok', { label: 'Aprovado' });
   if (review.status === 'attention') return stamp('nc', { label: 'Atenção' });
+  if (doc.correction) return stamp('pending', { label: `Corrigido · v${correctionVersion(doc)}` });
+  if (review.reopened) return stamp('pending', { label: 'Reaberta' });
   if (review.status === 'awaiting') return stamp('pending', { label: 'Revisão' });
   if (st.pointed) return stamp('nc', { label: 'Apontamento' });
   if (st.pending) return stamp('pending', { label: 'Em análise' });
@@ -290,7 +295,9 @@ export function renderDocument(state, docId) {
       fmtDate(doc.addedAt)
     )} <span aria-hidden="true">·</span> <span data-doc-summary>${
       doc.active === false ? 'Inativo' : `${st.done}/${st.total} verificações`
-    }</span> <span aria-hidden="true">·</span> ${docTagHtml(state, doc)}</p>` +
+    }</span> <span aria-hidden="true">·</span> ${docTagHtml(state, doc)}${
+      versionsOf(doc).length ? ` <span aria-hidden="true">·</span> ${versionsButtonHtml(doc)}` : ''
+    }</p>` +
     `</div>` +
     `<div class="page__actions">` +
     (canApprove
@@ -309,6 +316,7 @@ export function renderDocument(state, docId) {
           'external',
           15
         )} Ver arquivo</button>`) +
+    correctionActionsHtml(state, doc, review) +
     `<button type="button" class="btn ${doc.active === false ? 'btn--secondary' : 'btn--ghost'}" ` +
     `data-action="doc-toggle-active" data-id="${doc.id}">${icon('power', 15)} ${
       doc.active === false ? 'Reativar' : 'Inativar'
@@ -325,6 +333,23 @@ export function renderDocument(state, docId) {
     (doc.active === false
       ? `<div class="doc-inactive-banner">${icon('pause', 16)}<div><strong>Documento inativo — verificação suspensa</strong>` +
         `<span>${esc(doc.inactiveReason || 'Sem motivo registrado')}</span></div></div>`
+      : '') +
+    (doc.reopen
+      ? `<div class="doc-reopen-banner">${icon('arrowLeft', 16)}<div><strong>Revisão reaberta por ${esc(
+          doc.reopen.byName || 'revisor'
+        )}</strong>` +
+        `<span>${esc(doc.reopen.reason)} · ${esc(fmtDate(doc.reopen.at))}</span></div></div>`
+      : '') +
+    (correctionPillHtml(doc)
+      ? `<div class="doc-correction-banner">${icon('file', 16)}<div><strong>Correção aguardando revisão</strong>` +
+        `<span>${esc(doc.correction.name)} · ${fmtBytes(doc.correction.size)} · enviada por ${esc(
+          doc.correction.byName || 'alguém'
+        )} em ${esc(fmtDate(doc.correction.addedAt))}.</span>` +
+        `<span>${esc(
+          currentProfile(state)?.role === 'reviewer'
+            ? 'Compare o antes e o depois e aprove a nova versão.'
+            : 'O revisor compara o antes e o depois antes de aprovar.'
+        )}</span></div></div>`
       : '') +
     `<section class="card checks" aria-label="Verificações do documento">` +
     renderChecks(state, doc) +

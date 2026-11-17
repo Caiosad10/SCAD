@@ -21,8 +21,10 @@ import {
   isRequirementsFlow,
   childDocuments,
   ui,
+  versionsOf,
 } from '../store.js';
 import { renderChecks, docSummaryHtml } from './checks.js';
+import { correctionActionsHtml, versionsButtonHtml } from './correction.js';
 
 function lastUpdate(state, docId) {
   const checks = state.checks.filter((c) => c.docId === docId);
@@ -141,28 +143,36 @@ export function renderWorkbench(state) {
       ? `<section class="card done-card">` +
         `<span class="done__icon">${icon('check', 18)}</span>` +
         `<div class="done-card__copy"><h2>${
-          review.status === 'approved'
-            ? 'Documento aprovado'
-            : review.status === 'attention'
-              ? 'Revisão com sinalização'
-              : 'Análise concluída'
+          doc.correction
+            ? 'Correção enviada'
+            : review.status === 'approved'
+              ? 'Documento aprovado'
+              : review.status === 'attention'
+                ? 'Revisão com sinalização'
+                : 'Análise concluída'
         }</h2>` +
         `<p>${
-          review.status === 'approved'
-            ? 'A revisão deste documento foi concluída.'
-            : review.status === 'attention'
-              ? 'Há critério sinalizado pelo revisor. Corrija e o documento volta para a revisão.'
-              : s.nc + s.obs
-                ? `${s.nc} não conforme(s) e ${s.obs} observação(ões) registradas. Revise os apontamentos antes de encerrar.`
-                : 'Todas as verificações foram avaliadas; o documento está pronto para revisão.'
+          doc.correction
+            ? 'O revisor compara o antes e o depois e aprova a nova versão do documento.'
+            : review.status === 'approved'
+              ? 'A revisão deste documento foi concluída.'
+              : review.status === 'attention'
+                ? 'Há critério sinalizado pelo revisor. Corrija e o documento volta para a revisão.'
+                : s.nc + s.obs
+                  ? `${s.nc} não conforme(s) e ${s.obs} observação(ões) registradas. Revise os apontamentos antes de encerrar.`
+                  : 'Todas as verificações foram avaliadas; o documento está pronto para revisão.'
         }</p></div>` +
         `<div class="done-card__actions">` +
-        (canApprove
-          ? `<button type="button" class="btn btn--primary btn--sm" data-action="review-approve" data-id="${doc.id}">${icon(
-              'check',
-              15
-            )} Aprovar documento</button>`
-          : '') +
+        (doc.correction && !isItem
+          ? `<button type="button" class="btn btn--primary btn--sm" data-action="correction-open" data-id="${
+              doc.id
+            }">${icon('file', 15)} Visualizar correção</button>`
+          : canApprove
+            ? `<button type="button" class="btn btn--primary btn--sm" data-action="review-approve" data-id="${doc.id}">${icon(
+                'check',
+                15
+              )} Aprovar documento</button>`
+            : '') +
         `<a class="btn btn--secondary btn--sm" href="#/apontamentos">Apontamentos</a>` +
         `<button type="button" class="btn btn--secondary btn--sm" data-action="export-csv">Exportar CSV</button>` +
         `</div></section>`
@@ -179,6 +189,7 @@ export function renderWorkbench(state) {
     `<h2 class="doc-head__title">${esc(doc.name)}</h2>` +
     `<p class="page__sub" data-doc-summary>${docSummaryHtml(state, doc)}` +
     (updated ? `<span aria-hidden="true">·</span>última edição ${esc(relTime(updated))}` : '') +
+    (versionsOf(doc).length ? `<span aria-hidden="true">·</span>${versionsButtonHtml(doc)}` : '') +
     `</p></div>` +
     `<div class="page__actions">` +
     (canApprove
@@ -193,6 +204,7 @@ export function renderWorkbench(state) {
           'external',
           15
         )} Ver arquivo</button>`) +
+    correctionActionsHtml(state, doc, review) +
     `<button type="button" class="btn ${doc.active === false ? 'btn--secondary' : 'btn--ghost'}" ` +
     `data-action="doc-toggle-active" data-id="${doc.id}">${icon('power', 15)} ${
       doc.active === false ? 'Reativar' : 'Inativar'
