@@ -547,6 +547,7 @@ Ordem do selo na lista e no documento: inativo → aprovado → atenção → **
 
 - **Página do documento:** faixa de correção (arquivo, tamanho, autor, data + dica para o revisor) e faixa de reabertura (motivo + autor + data); ações "Visualizar correção"/"Adicionar correção", "Reabrir revisão" (revisor) e "Versões: v1, v2".
 - **Gaveta de comparação** (`sheet--compare`, até 1320 px): três painéis — **original**, **corrigido** e **critérios** com o selo e a mensagem da última análise; rodapé com Fechar, "Remover correção" (autor), "Abrir corrigido" e "Aprovar documento" (revisor). Abaixo de 1100 px os painéis viram **abas** (`Original · Corrigido · Critérios`).
+- **Painel "O que mudou"** (dentro da comparação, entre a barra do topo e os painéis): lista recolhível com os trechos de texto que mudaram entre a versão vigente e a corrigida — resumo em `N trechos alterados · N adições · N remoções · N alterações`, âncora (o parágrafo igual anterior) e as palavras marcadas (`del`/`ins`). Mudança pequena (até 6 trechos) abre sozinha; mudança grande fica fechada para não empurrar a comparação. Só apoio à leitura: o registro continua sendo o arquivo aprovado.
 - **Gaveta "Adicionar correção":** dropzone com anexo por clique, prévia local antes de enviar, nome pré-preenchido e botão "Enviar correção vN" bloqueado até haver arquivo.
 - **Gaveta "Versões":** cada versão abre na prévia (PDF, .docx, .doc em texto, imagem); a vigente aparece como "Atual".
 - **Bancada:** com correção pendente o cartão de conclusão muda para "Correção enviada" com a ação "Visualizar correção".
@@ -555,14 +556,27 @@ Ordem do selo na lista e no documento: inativo → aprovado → atenção → **
 #### 20.5 Como foi verificado (4188, dados copiados da produção)
 
 - `node --check` em `server.mjs` e nos 9 módulos do cliente.
-- **API** (`scripts/correctiontest.mjs`): **51 asserções**, todas passando — envio, bloqueio de segunda correção, remoção só pelo autor, 403 de revisor/analista nos papéis trocados, promoção com versão arquivada servida (200), versões em ordem, reabertura sem motivo (400), reabertura por analista (403), checks voltando a "aguardando" com o resultado preservado, reaprovação limpando `reopen`, documento inativo (409), item de listagem (400) e exclusão com arquivos apagados (404).
-- **Interface** (`scripts/correctionui.mjs`, Edge headless por CDP): **30 asserções**, todas passando — selo na lista, faixas, comparação com as três colunas (1440 px), abas e troca de painel (820 px), gaveta de versões fechando, gaveta de correção com envio bloqueado, aprovação pela comparação, reabertura com motivo e selo "Reaberta". **Zero exceção de JavaScript.**
+- **API** (`scripts/correctiontest.mjs`): **54 asserções**, todas passando — envio, bloqueio de segunda correção, remoção só pelo autor, 403 de revisor/analista nos papéis trocados, promoção com versão arquivada servida (200), versões em ordem, reabertura sem motivo (400), reabertura por analista (403), checks voltando a "aguardando" com o resultado preservado, reaprovação limpando `reopen`, documento inativo (409), item de listagem (400) e exclusão com arquivos apagados (404). O script cria o próprio documento de trabalho, então roda repetido sem depender do estado deixado pela rodada anterior.
+- **Interface** (`scripts/correctionui.mjs`, Edge headless por CDP): **41 asserções**, todas passando — selo na lista, faixas, comparação com as três colunas (1440 px), abas e troca de painel (820 px), gaveta de versões fechando, gaveta de correção com envio bloqueado, aprovação pela comparação, reabertura com motivo e selo "Reaberta", aviso de "sem texto para comparar" no par de PDFs e o painel "O que mudou" no par de .docx (resumo, âncoras, palavras destacadas, parágrafo novo, prazo trocado e recolher/reabrir). **Zero exceção de JavaScript.**
+- **Motor de comparação** (`scripts/difftest.mjs`): **28 asserções** unitárias sobre `public/js/diff.js`, rodando no Node sem navegador (o módulo entra por `data:` URL) — parágrafos, adição, remoção, alteração de palavra, parágrafo reescrito (vira remoção + adição), repetidos, espaçamento, ordem do documento, documento vazio e texto de 1.200 linhas.
+- **Layout medido no navegador** (1440 px, 834 px e 390 px): o painel fica entre a barra e os painéis, com a mesma largura deles; sem estouro horizontal da página; o resumo quebra em vez de cortar no estreito; a lista rola por dentro (máx. 34vh, 46vh no estreito).
 - **Regressão:** `scripts/reviewtest.mjs` (24 asserções do fluxo de revisão e presença) passou inteiro sobre um documento com correção pendente; `scripts/reviewui.mjs` passou 26 de 28 — as duas falhas são as de **presença na matriz**, que dependem da sincronia de 12 s (o teste faz o POST e lê a matriz antes do próximo batimento); código de presença não foi tocado nesta rodada.
-- Limpeza: `scripts/qapreparecorrecao.mjs` deixa o cenário pronto (uma versão arquivada + uma correção pendente + um documento aprovado extra).
+- Limpeza: `scripts/qapreparecorrecao.mjs` deixa o cenário pronto (uma versão arquivada + uma correção pendente + um documento aprovado extra + um par de .docx com diferenças conhecidas, gerado por `scripts/mkdocx.mjs`).
 
 #### 20.6 Pendências desta rodada
 
-1. Validação visual do Sergio em `http://localhost:4188` (as capturas estão em `shots/correcao-*.png`).
+1. Validação visual do Sergio em `http://localhost:4188` (as capturas estão em `shots/correcao-*.png`; o painel novo é `shots/correcao-11-diff.png`).
 2. Commit no `fase-a` (feito nesta rodada); merge/deploy só com OK explícito.
 3. `scripts/smoke.mjs` e `scripts/qa.mjs` são da v1 (`/api/process`, `/api/state` sem processo) — não servem de rede de segurança para a v2; ou atualizam, ou saem do repositório.
 4. O módulo **Controle de Validade** (contagem de validade de documentos, decidido em 17/11) continua no backlog do Kanban, fora desta entrega.
+
+#### 20.7 Painel "O que mudou" — comparação de texto (commit separado, 2026-11-17)
+
+Decidido depois de a correção com versionamento já estar validada: o diff entrou como **etapa separada**, em **commit próprio**, para poder ser revertido sozinho.
+
+- **Onde roda:** só no navegador. **Nenhuma mudança no servidor, na API ou no schema** — se o diff incomodar, `git revert` do commit devolve exatamente o estado validado antes dele.
+- **Módulos novos:** `public/js/diff.js` (motor) e a leitura de texto em `public/js/preview.js` (`textoDoArquivo`); desenho do painel em `public/js/views/correction.js` (`diffBodyHtml`, `diffAvisoHtml`); ligação em `app.js` (`montarDiffCorrecao`).
+- **Como compara:** alinhamento por **parágrafos** (LCS) e, dentro do parágrafo alterado, marca **palavra por palavra**. Parágrafo sem nada em comum com o par vira "remoção + adição" (não tenta parecer "alteração"). Cada trecho vem com a âncora do último parágrafo igual, para o revisor achar o ponto no documento.
+- **O que compara:** o **texto**. Imagens, tabelas, cabeçalho, numeração automática e formatação não entram — e o painel diz isso ao revisor. `.docx` e `.doc` são lidos; **PDF digitalizado não tem texto** e recebe um aviso explícito ("PDF digitalizado não tem texto para comparar") em vez de um resultado falso vazio. Os 7 PDFs da produção são formulários assinados/digitalizados — neles a comparação continua sendo lado a lado, como antes.
+- **Custo:** guardas de tamanho (`LIMITE_BLOCOS`, `LIMITE_PALAVRAS`) para documento gigante não travar a aba; a lista mostra até 80 trechos e avisa quantos ficaram de fora.
+- **Testes:** `scripts/difftest.mjs` (28, no Node), `scripts/correctionui.mjs` (+11 asserções no navegador) e `scripts/mkdocx.mjs` para gerar o par de .docx do cenário.

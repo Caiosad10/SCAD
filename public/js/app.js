@@ -50,7 +50,15 @@ import {
   markSave,
 } from './ui.js';
 import { icon } from './icons.js';
-import { suportaPreviaDocx, ehDocAntigo, montarPreviaDocx, montarPreviaDoc } from './preview.js';
+import {
+  suportaPreviaDocx,
+  ehDocAntigo,
+  montarPreviaDocx,
+  montarPreviaDoc,
+  textoDoArquivo,
+} from './preview.js';
+import { diffTexto, resumoEmTexto } from './diff.js';
+import { diffBodyHtml, diffAvisoHtml } from './views/correction.js';
 import { renderOnboarding, chipsHtml, PRESET_LIST } from './views/onboarding.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderDocuments, renderDocumentsList, renderDocument, filterDocuments } from './views/documents.js';
@@ -2024,6 +2032,7 @@ function openCompareCorrection(docId) {
   const correctedView = previewBody(correction.name, correction.mime, api.fileUrl(correction.stored));
   const canApproveNow = reviewer && review.status === 'awaiting';
   const mine = currentProfile(state)?.id === correction.by;
+  const diffPanelId = `compare-diff-${Math.random().toString(36).slice(2, 8)}`;
   const dialog = openSheet({
     title: doc.name,
     eyebrow: `Comparação · correção v${version}`,
@@ -2039,6 +2048,14 @@ function openCompareCorrection(docId) {
       `<span class="compare__meta">${esc(correction.byName || 'alguém')} · ${esc(
         fmtDate(correction.addedAt)
       )} · ${fmtBytes(correction.size)}</span></div>` +
+      `<section class="compare__diff" data-compare-diff>` +
+      `<button type="button" class="compare__diff-head" data-compare-diff-toggle aria-expanded="false" ` +
+      `aria-controls="${diffPanelId}">` +
+      `<span class="compare__diff-title">${icon('list', 14)} O que mudou</span>` +
+      `<span class="compare__diff-summary" data-diff-summary>comparando o texto das duas versões…</span>` +
+      `<span class="compare__diff-chev" aria-hidden="true">${icon('chevronDown', 14)}</span></button>` +
+      `<div class="compare__diff-body" id="${diffPanelId}" data-diff-host hidden></div>` +
+      `</section>` +
       `<div class="compare__grid">` +
       `<section class="compare__pane" data-compare-pane="original">` +
       `<header class="compare__pane-head">Original · v${currentVersion(doc)}` +
@@ -2071,6 +2088,7 @@ function openCompareCorrection(docId) {
   });
   originalView.montar?.(dialog.querySelector('[data-preview-host="original"]'));
   correctedView.montar?.(dialog.querySelector('[data-preview-host="corrected"]'));
+  montarDiffCorrecao(dialog, doc, correction);
 
   const setView = (view) => {
     dialog.querySelectorAll('[data-compare-view]').forEach((btn) => {
@@ -2107,6 +2125,62 @@ function openCompareCorrection(docId) {
     removeCorrection(doc.id, dialog)
   );
   return dialog;
+}
+
+/**
+ * Preenche o painel "O que mudou" da comparação.
+ *
+ * Lê o texto das duas versões no próprio navegador (`textoDoArquivo`) e mostra
+ * os trechos alterados. É só apoio à leitura: o revisor continua decidindo pela
+ * comparação lado a lado, e o registro continua sendo o arquivo aprovado.
+ */
+async function montarDiffCorrecao(dialog, doc, correction) {
+  const secao = dialog.querySelector('[data-compare-diff]');
+  const corpo = dialog.querySelector('[data-diff-host]');
+  const resumo = dialog.querySelector('[data-diff-summary]');
+  const botao = dialog.querySelector('[data-compare-diff-toggle]');
+  if (!secao || !corpo || !resumo) return;
+
+  const mostrar = (aberto) => {
+    corpo.hidden = !aberto;
+    botao?.setAttribute('aria-expanded', String(aberto));
+    secao.setAttribute('data-open', String(aberto));
+  };
+  botao?.addEventListener('click', () => mostrar(corpo.hidden));
+
+  let falhouLeitura = false;
+  const ler = async (nome, url) => {
+    try {
+      return await textoDoArquivo(nome, url);
+    } catch (err) {
+      if (err?.codigo !== 'semTexto') falhouLeitura = true;
+      return null;
+    }
+  };
+  const [antes, depois] = await Promise.all([
+    ler(doc.name, api.fileUrl(doc.stored)),
+    ler(correction.name, api.fileUrl(correction.stored)),
+  ]);
+  if (!dialog.isConnected) return;
+
+  if (antes === null || depois === null) {
+    resumo.textContent = 'sem texto para comparar';
+    corpo.innerHTML = diffAvisoHtml(
+      'Não dá para comparar o texto destas versões.',
+      falhouLeitura
+        ? 'A leitura de um dos arquivos falhou. A comparação lado a lado continua valendo — abra as duas versões e confira.'
+        : 'Ao menos um dos arquivos não guarda texto legível (PDF digitalizado ou imagem). A comparação lado a lado continua valendo — abra as duas versões e confira.'
+    );
+    mostrar(true);
+    return;
+  }
+
+  const resultado = diffTexto(antes, depois);
+  resumo.textContent = resumoEmTexto(resultado.resumo);
+  corpo.innerHTML = diffBodyHtml(resultado);
+  secao.setAttribute('data-total', String(resultado.resumo.total));
+  // Mudança pequena abre sozinha; mudança grande fica fechada para não empurrar a comparação.
+  mostrar(resultado.resumo.total > 0 && resultado.resumo.total <= 6);
 }
 
 /** Envia a nova versão do arquivo (a atual vira histórico na aprovação). */

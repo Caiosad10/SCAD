@@ -55,22 +55,21 @@ const state0 = (await call('GET', `/api/state?processId=${encodeURIComponent(PID
 console.log(`processo: ${state0.process?.name} (${PID})`);
 
 /* ------------------------------------------------- documento de trabalho */
-let target = (state0.documents || []).find(
-  (doc) => doc.itemKind !== 'item' && doc.review?.status === 'approved'
-);
-
+/* Documento próprio: o teste não depende do que já está no processo. */
+const ALVO = `qa-correcao-alvo-${Date.now()}.txt`;
+let res = await call('POST', '/api/documents', { processId: PID, name: ALVO, data: b64('versao 1 do documento de teste') }, SERGIO, PID);
+check('documento de trabalho criado (201)', res.status === 201, `status ${res.status} ${res.raw?.slice(0, 140)}`);
+let target = (res.json?.state?.documents || []).find((doc) => doc.name === ALVO);
 if (!target) {
-  const candidate = (state0.documents || []).find(
-    (doc) => doc.itemKind !== 'item' && doc.review?.status === 'awaiting'
-  );
-  if (!candidate) {
-    console.error('FAIL nenhum documento aprovado ou pronto para revisão no processo.');
-    process.exit(1);
-  }
-  const prep = await call('POST', '/api/review/approve', { docId: candidate.id }, DIOGENES, PID);
-  check('preparação: revisor aprova documento', prep.status === 200, `status ${prep.status}`);
-  target = (prep.json?.state?.documents || []).find((doc) => doc.id === candidate.id);
+  console.error('FAIL não consegui criar o documento de trabalho.');
+  process.exit(1);
 }
+for (const alvoCheck of (res.json?.state?.checks || []).filter((item) => item.docId === target.id)) {
+  await call('PATCH', `/api/checks/${alvoCheck.id}`, { status: 'ok' }, SERGIO, PID);
+}
+res = await call('POST', '/api/review/approve', { docId: target.id }, DIOGENES, PID);
+check('documento de trabalho aprovado', res.status === 200, `status ${res.status}`);
+target = (res.json?.state?.documents || []).find((doc) => doc.id === target.id);
 
 const start = { stored: target.stored, name: target.name, size: target.size };
 const fetchState = async () =>
@@ -80,7 +79,7 @@ const docIn = (s, id = target.id) => (s?.documents || []).find((doc) => doc.id =
 console.log(`\ndocumento: ${start.name} (${target.id}) · estado ${target.review?.status}`);
 
 /* ------------------------------------------------------- envio da correção */
-let res = await call(
+res = await call(
   'POST',
   `/api/documents/${target.id}/correction`,
   { name: 'teste-correcao-v2.txt', data: b64('versao 2 do documento de teste') },

@@ -67,6 +67,76 @@ export function ehDocAntigo(name = '') {
   return /\.doc$/i.test(String(name));
 }
 
+function erroDeTexto(codigo, mensagem) {
+  const err = new Error(mensagem);
+  err.codigo = codigo;
+  return err;
+}
+
+/** Parágrafos do `word/document.xml`, na ordem do documento e sem formatação. */
+function textoDeDocumentXml(xml) {
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) {
+    throw erroDeTexto('semTexto', 'o documento do Word está ilegível');
+  }
+  const linhas = [];
+  for (const paragrafo of doc.getElementsByTagNameNS('*', 'p')) {
+    // Caixas de texto e afins ficam dentro de outro parágrafo: só o de fora conta.
+    let dentro = false;
+    for (let pai = paragrafo.parentElement; pai; pai = pai.parentElement) {
+      if (pai.localName === 'p') {
+        dentro = true;
+        break;
+      }
+    }
+    if (dentro) continue;
+    let texto = '';
+    for (const no of paragrafo.getElementsByTagNameNS('*', '*')) {
+      const nome = no.localName;
+      if (nome === 't') texto += no.textContent;
+      else if (nome === 'tab') texto += '\t';
+      else if (nome === 'br' || nome === 'cr') texto += '\n';
+    }
+    linhas.push(texto);
+  }
+  return linhas.join('\n');
+}
+
+async function textoDeDocx(dados) {
+  await bibliotecas();
+  const zip = window.JSZip;
+  if (!zip || typeof zip.loadAsync !== 'function') {
+    throw erroDeTexto('semTexto', 'a leitura de .docx não carregou');
+  }
+  const pacote = await zip.loadAsync(dados);
+  const documento = pacote.file('word/document.xml');
+  if (!documento) throw erroDeTexto('semTexto', 'o pacote do .docx não tem o documento');
+  return textoDeDocumentXml(await documento.async('string'));
+}
+
+/**
+ * Texto puro de um arquivo armazenado, para comparar duas versões.
+ *
+ * Aceita os mesmos formatos da prévia (.docx e .doc). Formatos sem texto legível
+ * (PDF digitalizado, imagem) lançam erro com `codigo = 'semTexto'`.
+ */
+export async function textoDoArquivo(name, url) {
+  const resposta = await fetch(url, { credentials: 'same-origin' });
+  if (!resposta.ok) throw new Error(`o servidor respondeu ${resposta.status}`);
+  const dados = await resposta.arrayBuffer();
+  if (!dados.byteLength) throw new Error('arquivo vazio');
+  if (suportaPreviaDocx(name)) return textoDeDocx(dados);
+  if (ehDocAntigo(name)) {
+    try {
+      return extrairTextoDoc(dados).texto;
+    } catch (err) {
+      if (err.codigo !== 'docx') throw err;
+      return textoDeDocx(dados);
+    }
+  }
+  throw erroDeTexto('semTexto', `${name} é um formato sem texto comparável`);
+}
+
 function aviso(iconName, texto) {
   const caixa = document.createElement('div');
   caixa.className = 'preview-fallback';

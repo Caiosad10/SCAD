@@ -113,7 +113,16 @@ async function click(selector) {
 /** Fecha qualquer gaveta que tenha ficado aberta (troca de tela entre passos). */
 async function closeAllDialogs() {
   await evalJs(`document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close())`);
-  await sleep(400);
+  await sleep(600);
+}
+
+/** Espera sobrar uma única gaveta aberta (a que o teste quer examinar). */
+async function waitOneDialog() {
+  for (let i = 0; i < 40; i += 1) {
+    if ((await evalJs('document.querySelectorAll("dialog[open]").length')) === 1) return true;
+    await sleep(150);
+  }
+  return false;
 }
 
 await send('Page.enable');
@@ -164,6 +173,7 @@ await shot('correcao-02-documento');
 
 /* --------------------------------------------------- 3. comparação larga */
 await click('[data-action="correction-open"]');
+await waitOneDialog();
 const compare = await evalJs(`(() => {
   const c = document.querySelector('.compare');
   if (!c) return null;
@@ -181,6 +191,19 @@ check('painel de critérios lista as verificações', (compare?.criteria || 0) >
 check('analista não vê "Aprovar documento"', compare?.approve === false);
 check('autor vê "Remover correção"', compare?.remove === true);
 check('largura usa as três colunas', (compare?.cols || '').split(' ').length === 3, compare?.cols);
+let avisoPdf = '';
+for (let i = 0; i < 24; i += 1) {
+  avisoPdf = await evalJs(
+    `(() => { const d = [...document.querySelectorAll('dialog[open]')].pop(); return d?.querySelector('[data-diff-summary]')?.textContent?.trim() || ''; })()`
+  );
+  if (avisoPdf && !/comparando/i.test(avisoPdf)) break;
+  await sleep(250);
+}
+check('PDF digitalizado avisa que não há texto para comparar', /sem texto para comparar/i.test(avisoPdf), avisoPdf);
+check(
+  'aviso manda continuar pela comparação lado a lado',
+  (await evalJs('document.querySelector("[data-diff-host]")?.innerText || ""')).toLowerCase().includes('lado a lado')
+);
 await sleep(1200);
 await shot('correcao-03-comparacao');
 
@@ -202,6 +225,70 @@ check('estreito: uma coluna e abas visíveis', narrow?.switchVisible === true &&
 check('estreito: "Critérios" alterna o painel', narrow?.originalHidden === true && narrow?.view === 'criteria', JSON.stringify(narrow));
 await shot('correcao-04-comparacao-criterios');
 await click('dialog [data-close]');
+
+/* ------------------------------------- 4b. "O que mudou" com um par de .docx */
+const wordDoc = (refState.documents || []).find((item) => item.correction && /\.docx$/i.test(item.name));
+if (wordDoc) {
+  await closeAllDialogs();
+  await goto(`#/documentos/${wordDoc.id}`);
+  await click('[data-action="correction-open"]');
+  check('só a comparação fica aberta', await waitOneDialog());
+  let resumo = '';
+  for (let i = 0; i < 60; i += 1) {
+    resumo = await evalJs(
+      `(() => { const d = [...document.querySelectorAll('dialog[open]')].pop(); return d?.querySelector('[data-diff-summary]')?.textContent?.trim() || ''; })()`
+    );
+    if (resumo && !/comparando/i.test(resumo)) break;
+    await sleep(300);
+  }
+  check('painel "O que mudou" mede os trechos alterados', /4 trechos alterados/.test(resumo), resumo);
+  check(
+    'resumo separa adições, remoções e alterações',
+    /2 adições/.test(resumo) && /2 alterações/.test(resumo) && !/remoç/.test(resumo),
+    resumo
+  );
+  const painel = await evalJs(`(() => {
+    const root = [...document.querySelectorAll('dialog[open]')].pop();
+    if (!root) return null;
+    const secao = root.querySelector('[data-compare-diff]');
+    const corpo = root.querySelector('[data-diff-host]');
+    const linhas = (seletor) => [...root.querySelectorAll(seletor)].map((el) => el.textContent.trim());
+    return {
+      secao: Boolean(secao),
+      open: secao?.getAttribute('data-open'),
+      aberto: corpo ? !corpo.hidden : null,
+      ctx: [...root.querySelectorAll('.diff__ctx')].map((el) => el.textContent.trim()),
+      itens: root.querySelectorAll('.diff__item').length,
+      ins: linhas('.diff__line--add ins'),
+      del: linhas('.diff__line--del del'),
+      novas: [...root.querySelectorAll('.diff__line--add')].map((el) => el.innerText.replace(/^\\+\\s*/, '').trim()),
+    };
+  })()`);
+  check('mudança pequena abre o painel sozinha', painel?.aberto === true && painel?.open === 'true', JSON.stringify(painel?.aberto));
+  check(
+    'trechos agrupados pela âncora do documento',
+    (painel?.ctx || []).some((item) => /2\. Responsabilidades/.test(item)),
+    JSON.stringify(painel?.ctx)
+  );
+  check('palavras acrescentadas ficam destacadas', (painel?.ins || []).some((item) => /certificado de qualidade/.test(item)), JSON.stringify(painel?.ins));
+  check('parágrafo novo aparece inteiro', (painel?.novas || []).some((item) => /Anexar o certificado de qualidade/.test(item)), JSON.stringify(painel?.novas));
+  check(
+    'prazo trocado mostra as palavras que saíram',
+    /três\s+dias\s+uteis/.test((painel?.del || []).join(' ').replace(/\s+/g, ' ')),
+    JSON.stringify(painel?.del)
+  );
+  await sleep(500);
+  await shot('correcao-11-diff');
+  await click('[data-compare-diff-toggle]');
+  const recolhido = await evalJs('document.querySelector("[data-diff-host]").hidden');
+  await click('[data-compare-diff-toggle]');
+  const reaberto = await evalJs('!document.querySelector("[data-diff-host]").hidden');
+  check('cabeçalho recolhe e reabre o painel', recolhido === true && reaberto === true, JSON.stringify({ recolhido, reaberto }));
+  await closeAllDialogs();
+  await goto(`#/documentos/${DOC}`);
+} else {
+  console.log('  --   (sem .docx com correção pendente; painel "O que mudou" pulado)');
+}
 
 /* ------------------------------------------------------------ 5. versões */
 await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });

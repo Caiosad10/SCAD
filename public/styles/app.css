@@ -5524,6 +5524,179 @@ button.version-row:hover {
   color: var(--muted-soft);
 }
 
+/* ---------------------------------------------------- "o que mudou" (diff) */
+
+.compare__diff {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.compare__diff-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  width: 100%;
+  padding: 10px var(--s4);
+  border: 0;
+  background: var(--card-soft);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.compare__diff-head:hover {
+  background: var(--card-sink);
+}
+
+.compare__diff-head:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.compare__diff-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-small);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.compare__diff-summary {
+  font-family: var(--font-mono);
+  font-size: var(--t-overline);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare__diff-chev {
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--muted);
+  transition: transform var(--t-fast) var(--ease);
+}
+
+.compare__diff[data-open='true'] .compare__diff-chev {
+  transform: rotate(180deg);
+}
+
+.compare__diff-body {
+  max-height: 34vh;
+  overflow: auto;
+  padding: var(--s3) var(--s4) var(--s4);
+  border-top: 1px solid var(--line-soft);
+  background: var(--card-sink);
+}
+
+.diff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.diff__item {
+  padding-left: var(--s3);
+  border-left: 2px solid var(--line-strong);
+}
+
+.diff__ctx {
+  margin: 0 0 4px;
+  font-family: var(--font-mono);
+  font-size: var(--t-overline);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-soft);
+}
+
+.diff__line {
+  display: flex;
+  gap: var(--s2);
+  margin: 0;
+  font-size: var(--t-small);
+  line-height: 1.55;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.diff__line + .diff__line {
+  margin-top: 2px;
+}
+
+.diff__mark {
+  flex: none;
+  width: 9px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--muted-soft);
+}
+
+.diff__line--del .diff__mark {
+  color: var(--nc);
+}
+
+.diff__line--add .diff__mark {
+  color: var(--ok);
+}
+
+.diff__line del {
+  background: var(--nc-soft);
+  color: var(--nc);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.diff__line ins {
+  background: var(--ok-soft);
+  color: var(--ok);
+  text-decoration: none;
+}
+
+.diff__more,
+.diff__note {
+  margin: var(--s3) 0 0;
+  font-size: var(--t-caption);
+  color: var(--muted-soft);
+}
+
+.diff__note b {
+  color: var(--muted);
+}
+
+.diff__vazio,
+.diff__aviso {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--s2);
+  align-items: start;
+  font-size: var(--t-small);
+  color: var(--muted);
+}
+
+.diff__vazio p,
+.diff__aviso p {
+  margin: 0;
+}
+
+.diff__vazio {
+  color: var(--ok);
+}
+
+.diff__aviso-dica {
+  grid-column: 2;
+  color: var(--muted-soft);
+  font-size: var(--t-caption);
+}
+
 @media (max-width: 1099px) {
   .compare__grid {
     grid-template-columns: 1fr;
@@ -5549,5 +5722,16 @@ button.version-row:hover {
 
   .compare__preview {
     min-height: 260px;
+  }
+
+  .compare__diff-body {
+    max-height: 46vh;
+  }
+
+  /* estreito: o resumo quebra em duas linhas em vez de sumir no "…" */
+  .compare__diff-summary {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
 }

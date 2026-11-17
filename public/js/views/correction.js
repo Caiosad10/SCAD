@@ -58,3 +58,91 @@ export function correctionPillHtml(doc) {
     `${icon('file', 12)} Corrigido · v${version}</span>`
   );
 }
+
+/* ------------------------------------------------------- o que mudou */
+
+function cortar(texto, limite = 96) {
+  const limpo = String(texto || '').replace(/\s+/g, ' ').trim();
+  return limpo.length > limite ? `${limpo.slice(0, limite - 1)}…` : limpo;
+}
+
+function segmentos(partes, tag) {
+  return (partes || [])
+    .map((parte) => (parte.mudou ? `<${tag}>${esc(parte.t)}</${tag}>` : esc(parte.t)))
+    .join('');
+}
+
+/** Texto do arquivo sem camada de texto (PDF digitalizado, imagem). */
+export function diffAvisoHtml(mensagem, dica) {
+  return (
+    `<div class="diff__aviso">${icon('alert', 18)}` +
+    `<p>${esc(mensagem)}</p>` +
+    (dica ? `<p class="diff__aviso-dica">${esc(dica)}</p>` : '') +
+    `</div>`
+  );
+}
+
+/**
+ * Lista dos trechos alterados, agrupados pela âncora (o parágrafo anterior
+ * igual). Cada trecho mostra o que saiu e o que entrou, com as palavras
+ * exatas marcadas.
+ */
+export function diffBodyHtml(resultado, { limite = 80 } = {}) {
+  const trechos = resultado?.trechos || [];
+  if (!trechos.length) {
+    return (
+      `<div class="diff__vazio">${icon('check', 18)}` +
+      `<p>As duas versões têm <b>o mesmo texto</b> — a diferença, se houver, é de formatação, imagem ou layout, ` +
+      `que esta comparação não avalia.</p></div>`
+    );
+  }
+
+  const visiveis = trechos.slice(0, limite);
+  const grupos = [];
+  for (const trecho of visiveis) {
+    const ultimo = grupos[grupos.length - 1];
+    if (ultimo && ultimo.contexto === trecho.contexto) ultimo.itens.push(trecho);
+    else grupos.push({ contexto: trecho.contexto, itens: [trecho] });
+  }
+
+  const blocos = grupos
+    .map((grupo) => {
+      const linhas = grupo.itens
+        .map((trecho) => {
+          if (trecho.tipo === 'mod') {
+            return (
+              `<p class="diff__line diff__line--del"><span class="diff__mark" aria-hidden="true">−</span>` +
+              `<span>${segmentos(trecho.palavras?.antes, 'del')}</span></p>` +
+              `<p class="diff__line diff__line--add"><span class="diff__mark" aria-hidden="true">+</span>` +
+              `<span>${segmentos(trecho.palavras?.depois, 'ins')}</span></p>`
+            );
+          }
+          if (trecho.tipo === 'del') {
+            return (
+              `<p class="diff__line diff__line--del"><span class="diff__mark" aria-hidden="true">−</span>` +
+              `<span><del>${esc(trecho.antes)}</del></span></p>`
+            );
+          }
+          return (
+            `<p class="diff__line diff__line--add"><span class="diff__mark" aria-hidden="true">+</span>` +
+            `<span><ins>${esc(trecho.depois)}</ins></span></p>`
+          );
+        })
+        .join('');
+      return (
+        `<li class="diff__item">` +
+        `<p class="diff__ctx">${esc(grupo.contexto ? cortar(grupo.contexto) : 'início do documento')}</p>` +
+        linhas +
+        `</li>`
+      );
+    })
+    .join('');
+
+  const restantes = trechos.length - visiveis.length;
+  return (
+    `<ol class="diff">${blocos}</ol>` +
+    (restantes > 0 ? `<p class="diff__more">… e mais ${restantes} trecho(s) — abra a versão corrigida para ver o resto.</p>` : '') +
+    `<p class="diff__note">Comparação automática do <b>texto</b> dos dois arquivos: imagens, tabelas e formatação não entram. ` +
+    `Serve para o revisor achar o que mudou — o documento em si continua valendo como anexo.</p>`
+  );
+}
