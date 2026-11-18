@@ -2031,26 +2031,6 @@ p {
   width: min(220px, 34vw);
 }
 
-.checks__actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-}
-
-.checks__add {
-  white-space: nowrap;
-  border-style: dashed;
-  border-color: var(--line);
-  color: var(--ink-soft);
-}
-
-.checks__add:hover,
-.checks__add:focus-visible {
-  border-style: solid;
-  color: var(--ink);
-}
-
 .check {
   position: relative;
   padding: 15px 20px 16px;
@@ -3112,6 +3092,39 @@ p {
   font-size: 13px;
 }
 
+/* figura que o navegador não desenha (fluxograma do Visio em EMF/WMF) */
+.preview-nao-desenha {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  max-width: 100%;
+  margin: 6px 0;
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: var(--card-soft);
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.preview-nao-desenha svg {
+  flex: none;
+  color: var(--muted-soft);
+}
+
+.preview-nao-desenha p {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0;
+}
+
+.preview-nao-desenha b {
+  color: var(--ink);
+}
+
 /* prévia de .doc: texto lido do arquivo, numa folha de leitura */
 
 .preview-doc {
@@ -3569,16 +3582,6 @@ p {
   .checks__head {
     padding: 13px 16px;
     flex-wrap: wrap;
-  }
-
-  .checks__actions {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .checks__actions .btn {
-    width: 100%;
-    justify-content: center;
   }
 
   .check {
@@ -5234,6 +5237,16 @@ dialog.sheet--compare {
   width: min(1320px, calc(100vw - 24px));
 }
 
+/* Prévia com o painel de critérios: mesma largura da comparação, para o
+   documento não ficar espremido ao lado da coluna de verificações. */
+dialog.sheet--preview {
+  width: min(1320px, calc(100vw - 24px));
+}
+
+.compare__grid.compare__grid--rail {
+  grid-template-columns: 1fr minmax(280px, 320px);
+}
+
 .sheet--compare .sheet__body {
   padding-bottom: var(--s3);
 }
@@ -5863,3 +5876,22 @@ button.version-row:hover {
     text-overflow: clip;
   }
 }
+
+/* ------------------------------------------------- prévia com critérios */
+/* Estreito (iPad de pé, celular): uma coluna só, e as abas trocam entre o
+   arquivo e os critérios — mesmo desenho da comparação da correção. */
+@media (max-width: 1099px) {
+  .compare__grid.compare__grid--rail {
+    grid-template-columns: 1fr;
+  }
+
+  .compare--preview .compare__switch {
+    display: inline-flex;
+  }
+
+  .compare--preview[data-view='file'] [data-preview-pane='criteria'],
+  .compare--preview[data-view='criteria'] [data-preview-pane='file'] {
+    display: none;
+  }
+}
+

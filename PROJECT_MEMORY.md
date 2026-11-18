@@ -1,7 +1,7 @@
 # SCAD — Project Memory
 
 **Última atualização:** 2026-11-18
-**Estado:** **v2.3.0 em produção** (`scad/`, porta 4177, desde 17/11/2026) — correção com comparação antes/depois, versionamento e reabertura de revisão. **v2.3.1 pronta no QA** (`scad-v2`, porta 4188): "Importar mais" fora da bancada, "O que mudou" sempre fechado e relato de quem corrigiu quando o diff não roda. Desenvolvimento no worktree `scad-v2` (branch `fase-a`).
+**Estado:** **v2.3.0 em produção** (`scad/`, porta 4177, desde 17/11/2026) — correção com comparação antes/depois, versionamento e reabertura de revisão. **v2.3.1 pronta no QA** (`scad-v2`, porta 4188): bancada sem botões de importação, "O que mudou" sempre fechado com relato de quem corrigiu, prévia do arquivo com o painel de critérios ao lado e aviso das figuras do Visio. Desenvolvimento no worktree `scad-v2` (branch `fase-a`).
 **Repositório/app:** `C:\Users\Citra LTDA\OneDrive\Desktop\DSH\scad` (produção) · branch em `scad-v2` (worktree)
 
 Este documento é a fonte de verdade das decisões de produto, regras de negócio e próximos passos. Atualizar sempre que uma decisão for tomada.
@@ -660,3 +660,29 @@ O Sergio usou a v2.3.0 em produção na manhã de 18/11 e trouxe três pontos; e
 - **Servidor:** `changeNoteOf` (normalização de `correction` e de `versions`), `optionalText(body.changeNote, 1200, 'o que mudou')` no `POST` e no novo `PATCH`, e a promoção copiando o relato para o registro arquivado. `api.setChangeNote`.
 - **Testes:** `correctiontest.mjs` **65** checagens (relato junto ao envio, PATCH do autor, 403 para terceiro, 400 para texto inválido/longo, 409 sem correção pendente, relato na versão arquivada e na atividade); **`scripts/changenotes.mjs` novo, 30 checagens de navegador** (barra sem "Importar mais", "Adicionar item" intacto na listagem, painel fechado no PDF, relato escrito/salvo pelo autor, revisor lê e não edita, campo exigido só para arquivo sem texto — via `DOM.setFileInputFiles`); `correctionui.mjs` atualizado para o painel fechado (**48** checagens). `ordertest.mjs` teve uma asserção corrigida ("última atividade **agora**" é rótulo válido quando a atividade é de segundos atrás).
 - **Estado:** tudo verde na 4188 (v2.3.1). **Produção continua na v2.3.0** — o deploy precisa do reinício elevado e é decisão do Sergio.
+
+### 23. Barra sem botão, prévia com critérios e o fluxograma do Visio (2026-11-18, ainda no QA)
+
+Depois de aprovar a v2.3.1 no teste dele, o Sergio pediu três coisas na mesma linha de "não sair da tela".
+
+#### 23.1 A barra de verificações não tem mais nenhuma ação
+
+- Ele mesmo: "Tire o 'Adicionar item' da barra de verificação, ele não faz sentido lá se já está na bancada e no acervo/documentos". Agora `checksHeadHtml` só desenha progresso (número, medidor), nos dois fluxos. O `open-item-dialog` continua existindo e é usado pelo Acervo, pelo Painel do processo e pelo estado vazio da bancada.
+- CSS morto removido: `.checks__actions`, `.checks__add` e as duas regras da media query estreita. Nada de margem sobrando, porque `.checks__head` é flex.
+
+#### 23.2 Prévia do arquivo com o painel de critérios ao lado
+
+- **O problema de fluxo:** "Ter que entrar no 'Ver arquivo', sair, ver as verificações e checar de novo em Ver arquivo pesa no fluxo".
+- **O que entrou:** a gaveta da prévia (Ver arquivo, do documento) ganhou a **mesma coluna de critérios da comparação** — arquivo à esquerda, critérios à direita (1320 px de gaveta), cada critério com nome, selo de status, a observação escrita e o selo de revisão. No iPad/estreito vira duas abas ("Arquivo" · "Critérios"), igual à comparação.
+- **Revisor trabalha ali:** vê "Sinalizar critério" em cada verificação e "Aprovar documento" no rodapé quando a revisão está esperando (`review.status === 'awaiting'`) — sinalizar não fecha a gaveta, só atualiza a coluna; aprovar fecha a gaveta depois do diálogo de confirmação. Analista continua só lendo.
+- **Rodapé:** "Fechar" · "Ver na bancada" (fecha e troca a tela) · "Abrir em nova aba" · "Baixar".
+- **Onde vale:** toda prévia de **documento do processo** (`openPreview`) — Acervo, bancada e Apontamentos. Evidência avulsa e item de listagem continuam sem painel (não têm verificações próprias).
+- **Reaproveitamento:** `criteriaPanelHtml` (a mesma função da comparação) e as classes `.compare__*` com `.compare__grid--rail`; só o CSS da grade é novo. `openStoredPreview` aceita `doc` e monta o painel; correção e versões continuam chamando sem `doc`.
+
+#### 23.3 O fluxograma do RP não é falha do SCAD (limite do formato)
+
+- **Diagnóstico (arquivo real, `RP 02- Realização de Demanda.docx`):** o "2. FLUXOGRAMA" **não é imagem nem tabela** — é um **desenho do Visio colado**. Dentro do `.docx`: `word/media/image3.emf` (562 KB) + `word/embeddings/Desenho_do_Microsoft_Visio.vsdx` (63 KB), referenciados por `w:pict`/`v:imagedata` (rId10) e declarados em `[Content_Types].xml` como `image/x-emf`.
+- **Por que some:** EMF/WMF é formato vetorial do Windows; **nenhum navegador desenha**, e a biblioteca `docx-preview` não trata o tipo (não há uma ocorrência de "emf"/"wmf" no arquivo dela). Não é o SCAD apagando nada: o texto do resto do documento está todo lá.
+- **O que já foi feito (sem servidor):** a prévia reabre o pacote com JSZip, conta as figuras `word/media/*.emf|wmf` e mostra um **aviso no topo** — "N figura(s) deste documento não aparecem na prévia… desenho do Visio em EMF… abra o arquivo" — com botão para abrir o original. Se em algum caso o navegador deixar um `<img>` quebrado, o aviso entra no lugar da figura.
+- **Caminho para desenhar de verdade (não implementado, depende de decisão):** converter o EMF para PNG **no servidor, uma vez, na importação**, usando o GDI+ do próprio Windows (PowerShell + `System.Drawing`). Provado em 18/11 sobre o arquivo real: `Metafile` 989×573 → PNG de 64 KB com conteúdo (5,2% de pixels marcados). Custo: uma rotina a mais no servidor (dependência de PowerShell/GDI, só Windows), arquivo derivado em cache, limpeza junto com o documento, e reinício para publicar. O original nunca seria alterado — a conversão alimentaria apenas a prévia.
+- **Testes:** `scripts/previewcriteria.mjs` (novo, 38 checagens, só leitura): painel ao lado do arquivo com as duas colunas medidas, critérios na ordem certa, observação presente, placar no cabeçalho, "Ver na bancada" fechando a gaveta e trocando de tela, revisor com sinalizar/aprovar conforme o estado, abas no estreito, aviso do Visio no topo da prévia, zero exceção. Regressões no QA: `findingstest` (17), `changenotes` (30), `correctionui` (48), `ordertest` (12), `difftest`, `reviewtest`, `correctiontest` (65) — todos verdes.

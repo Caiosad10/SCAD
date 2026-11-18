@@ -162,9 +162,65 @@ function ajustarLargura(area) {
 }
 
 /**
- * Monta a prévia dentro de `alvo` (um elemento já visível na gaveta).
- * Mostra um aviso de carregamento e troca por uma mensagem amigável se falhar.
+ * Avisa sobre figuras que o navegador não consegue desenhar.
+ *
+ * Acontece de verdade com fluxogramas colados do Visio: o Word guarda o desenho
+ * como EMF/WMF (formato vetorial só do Windows), a biblioteca não desenha o
+ * formato e a figura simplesmente "some" — parece que o documento está vazio.
+ * Aqui o pacote é reaberto para contar essas figuras e o aviso fica no topo da
+ * prévia, com o caminho para abrir o arquivo original.
  */
+async function avisarFigurasQueNaoDesenham(alvo, url, dados) {
+  let presas = [];
+  let visio = false;
+  try {
+    const zip = window.JSZip;
+    if (zip && typeof zip.loadAsync === 'function') {
+      const pacote = await zip.loadAsync(dados);
+      const nomes = Object.keys(pacote.files || {});
+      presas = nomes.filter((nome) => /^word\/media\/[^/]+\.(emf|wmf)$/i.test(nome));
+      visio = nomes.some((nome) => /^word\/embeddings\/[^/]+\.vsdx?$/i.test(nome));
+    }
+  } catch {
+    /* pacote ilegível: a leitura de imagens abaixo ainda cobre o caso comum */
+  }
+
+  // Imagem que o desenho tentou mostrar e o navegador não abriu (outros formatos).
+  const figuras = [...alvo.querySelectorAll('img')];
+  if (figuras.length) {
+    await Promise.all(
+      figuras.map(
+        (img) =>
+          new Promise((resolve) => {
+            if (img.complete) return resolve();
+            img.addEventListener('load', resolve, { once: true });
+            img.addEventListener('error', resolve, { once: true });
+            setTimeout(resolve, 1200);
+          })
+      )
+    );
+  }
+  const quebradas = figuras.filter((img) => img.isConnected && img.naturalWidth === 0);
+
+  if (!presas.length && !quebradas.length) return;
+
+  const total = presas.length + quebradas.length;
+  const caixa = document.createElement('div');
+  caixa.className = 'preview-nao-desenha';
+  caixa.innerHTML =
+    `${icon('file', 18)}<p><b>${total} figura(s) deste documento não aparecem na prévia.</b> ` +
+    (presas.length
+      ? `O arquivo guarda ${presas.length === 1 ? 'um desenho' : `${presas.length} desenhos`} do Visio em ` +
+        `EMF${visio ? ' (com o arquivo do Visio embutido)' : ''}, um formato do Windows que o navegador não abre. `
+      : '') +
+    `No arquivo original ${total === 1 ? 'ela aparece' : 'elas aparecem'} — o resto do texto e das tabelas está aqui.</p>` +
+    `<a class="btn btn--ghost btn--sm" href="${url}" target="_blank" rel="noopener">Abrir o arquivo</a>`;
+  alvo.prepend(caixa);
+
+  // Se o desenho chegou a virar <img> e não abriu, o aviso entra no lugar dele.
+  for (const img of quebradas) img.replaceWith(caixa.cloneNode(true));
+}
+
 export async function montarPreviaDocx(alvo, url, { nome = 'documento' } = {}) {
   const espera = document.createElement('p');
   espera.className = 'preview-loading';
@@ -183,6 +239,7 @@ export async function montarPreviaDocx(alvo, url, { nome = 'documento' } = {}) {
     alvo.textContent = '';
     await lib.renderAsync(dados, alvo, alvo, OPCOES_DOCX);
     ajustarLargura(alvo);
+    avisarFigurasQueNaoDesenham(alvo, url, dados);
     // imagens e fontes chegam depois e podem mudar a largura da página
     setTimeout(() => ajustarLargura(alvo), 80);
     const aoRedimensionar = () => {
@@ -246,6 +303,7 @@ export async function montarPreviaDoc(alvo, url, { nome = 'documento', nota = nu
       alvo.classList.replace('preview-doc', 'preview-docx');
       await lib.renderAsync(dados, alvo, alvo, OPCOES_DOCX);
       ajustarLargura(alvo);
+      avisarFigurasQueNaoDesenham(alvo, url, dados);
       setTimeout(() => ajustarLargura(alvo), 80);
       trocarNota(
         'Este arquivo tem extensão .doc, mas por dentro é um .docx — por isso a prévia completa funciona aqui.'

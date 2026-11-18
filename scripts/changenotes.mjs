@@ -262,7 +262,11 @@ if (itemDoc) {
       texto: head?.innerText?.replace(/\\s+/g, ' ').trim() || '',
     };
   })()`);
-  check('listagem de requisitos mantém "Adicionar item"', (barraReq?.acoes || []).includes('open-item-dialog'), JSON.stringify(barraReq));
+  check(
+    'barra de verificações da listagem também está sem ação',
+    (barraReq?.acoes || []).length === 0 && /verifica/i.test(barraReq?.texto || ''),
+    JSON.stringify(barraReq)
+  );
 } else {
   console.log('  --   (processo de requisitos sem item; "Adicionar item" não verificado)');
 }

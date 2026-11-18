@@ -1939,20 +1939,117 @@ function previewBody(name, mime, url) {
   };
 }
 
-/** Abre a prévia de um arquivo armazenado qualquer (documento, correção, versão). */
-function openStoredPreview({ name, mime, size, stored, eyebrowLabel = null }) {
+/**
+ * Abre a prévia de um arquivo armazenado qualquer (documento, correção, versão).
+ *
+ * Com `doc`, a gaveta ganha o painel de critérios à direita — o mesmo desenho da
+ * comparação: dá para ler o arquivo e conferir as verificações sem trocar de tela.
+ */
+function openStoredPreview({ name, mime, size, stored, eyebrowLabel = null, doc = null }) {
   const url = api.fileUrl(stored);
   const view = previewBody(name, mime, url);
+  const state = getState();
+  const review = doc ? reviewOfDoc(state, doc.id) : null;
+  // O painel só faz sentido para documento do processo: item de listagem e
+  // evidência avulsa não têm verificações próprias.
+  const comPainel = Boolean(doc && !isItemDoc(doc) && review && review.total > 0);
+  const reviewer = currentProfile(state)?.role === 'reviewer';
+  const podeAprovar = comPainel && reviewer && review.status === 'awaiting';
+  const ver = doc ? currentVersion(doc) : 0;
+
+  const corpoArquivo =
+    `<section class="compare__pane" data-preview-pane="file">` +
+    `<div class="compare__preview" data-preview-host>${view.body}</div></section>`;
+  const corpoCriterios =
+    `<aside class="compare__criteria" data-preview-pane="criteria">` +
+    `<header class="compare__pane-head">Critérios<span>${review?.approved || 0}/${
+      review?.done || 0
+    } aprovados</span></header>` +
+    `<div class="compare__criteria-list" data-preview-criteria>${criteriaPanelHtml(state, doc)}</div></aside>`;
+
   const dialog = openSheet({
     title: name,
     eyebrow: eyebrowLabel || `${fileKindLabel(view.kind)}${size ? ` · ${fmtBytes(size)}` : ''}`,
-    body: view.body,
+    className: comPainel ? 'sheet--preview' : '',
     wide: true,
+    body: comPainel
+      ? `<div class="compare compare--preview" data-view="file">` +
+        `<div class="compare__toolbar">` +
+        `<div class="segmented compare__switch" role="group" aria-label="O que visualizar">` +
+        `<button type="button" data-preview-view="file" aria-pressed="true">Arquivo</button>` +
+        `<button type="button" data-preview-view="criteria" aria-pressed="false">Critérios</button>` +
+        `</div>` +
+        `<span class="compare__meta">v${ver} · ${review.done}/${review.total} verificações · ${
+          review.approved
+        } aprovadas</span></div>` +
+        `<div class="compare__grid compare__grid--rail">${corpoArquivo}${corpoCriterios}</div></div>`
+      : view.body,
     footer:
-      `<a class="btn btn--secondary" href="${url}" target="_blank" rel="noopener">${icon('external', 15)} Abrir em nova aba</a>` +
+      `<button type="button" class="btn btn--ghost" data-close>Fechar</button>` +
+      (comPainel
+        ? `<a class="btn btn--ghost" href="#/analisar/${doc.id}" data-close>${icon('list', 15)} Ver na bancada</a>`
+        : '') +
+      `<span class="sheet__foot-spacer"></span>` +
+      (podeAprovar
+        ? `<button type="button" class="btn btn--primary" data-preview-approve>${icon(
+            'check',
+            15
+          )} Aprovar documento</button>`
+        : '') +
+      `<a class="btn btn--secondary" href="${url}" target="_blank" rel="noopener">${icon(
+        'external',
+        15
+      )} Abrir em nova aba</a>` +
       `<a class="btn btn--primary" href="${url}?download=1" download>${icon('download', 15)} Baixar</a>`,
   });
   view.montar?.(dialog);
+
+  if (!comPainel) return dialog;
+
+  // Estreito: as abas trocam entre o arquivo e os critérios (o CSS só mostra o
+  // seletor abaixo de 1100 px; no desktop os dois ficam lado a lado).
+  const setView = (alvo) => {
+    dialog.querySelectorAll('[data-preview-view]').forEach((btn) => {
+      btn.setAttribute('aria-pressed', String(btn.dataset.previewView === alvo));
+    });
+    dialog.querySelector('.compare')?.setAttribute('data-view', alvo);
+  };
+  dialog
+    .querySelectorAll('[data-preview-view]')
+    .forEach((btn) => btn.addEventListener('click', () => setView(btn.dataset.previewView)));
+
+  // O revisor sinaliza o critério ali mesmo, sem sair da leitura do arquivo.
+  const bindFlags = () => {
+    dialog.querySelectorAll('[data-compare-flag]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        openFlagReview(doc.id, btn.dataset.compareFlag, {
+          onDone: () => {
+            const atual = docById(getState(), doc.id);
+            const lista = dialog.querySelector('[data-preview-criteria]');
+            if (atual && lista) {
+              lista.innerHTML = criteriaPanelHtml(getState(), atual);
+              bindFlags();
+            }
+          },
+        });
+      })
+    );
+  };
+  bindFlags();
+
+  dialog.querySelector('[data-preview-approve]')?.addEventListener('click', () =>
+    openApproveReview(doc.id, {
+      onDone: () => {
+        setView('file');
+        const atual = docById(getState(), doc.id);
+        const lista = dialog.querySelector('[data-preview-criteria]');
+        if (atual && lista) lista.innerHTML = criteriaPanelHtml(getState(), atual);
+        dialog.querySelector('[data-preview-approve]')?.remove();
+      },
+    })
+  );
+  // O botão "Ver na bancada" é um link com data-close: a gaveta fecha (openSheet)
+  // e o hash troca a tela por baixo.
   return dialog;
 }
 
@@ -1971,12 +2068,12 @@ function openPreview(docId) {
     });
     return;
   }
-  openStoredPreview({ name: doc.name, mime: doc.mime, size: doc.size, stored: doc.stored });
+  openStoredPreview({ name: doc.name, mime: doc.mime, size: doc.size, stored: doc.stored, doc });
 }
 
 /* ------------------------------------------------- correção e versões */
 
-/** Painel de critérios usado na comparação da correção. */
+/** Painel de critérios usado na comparação da correção e na prévia do arquivo. */
 function criteriaPanelHtml(state, doc) {
   const criteria = criteriaSorted(state);
   const criterionById = new Map(criteria.map((item) => [item.id, item]));
