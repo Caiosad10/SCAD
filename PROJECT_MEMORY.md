@@ -1,7 +1,7 @@
 # SCAD — Project Memory
 
 **Última atualização:** 2026-11-18
-**Estado:** **v2.3.0 em produção** (`scad/`, porta 4177, desde 17/11/2026) — correção com comparação antes/depois, versionamento e reabertura de revisão. **v2.3.1 pronta no QA** (`scad-v2`, porta 4188): bancada sem botões de importação, "O que mudou" sempre fechado com relato de quem corrigiu, prévia do arquivo com o painel de critérios ao lado e aviso das figuras do Visio. Desenvolvimento no worktree `scad-v2` (branch `fase-a`).
+**Estado:** **v2.3.0 em produção** (`scad/`, porta 4177, desde 17/11/2026) — correção com comparação antes/depois, versionamento e reabertura de revisão. **v2.3.1 pronta no QA** (`scad-v2`, porta 4188): bancada sem botões de importação, "O que mudou" sempre fechado com relato de quem corrigiu, prévia do arquivo com o painel de critérios ao lado e **fluxograma do Visio desenhado** (conversão EMF→PNG no servidor, sob demanda). Desenvolvimento no worktree `scad-v2` (branch `fase-a`).
 **Repositório/app:** `C:\Users\Citra LTDA\OneDrive\Desktop\DSH\scad` (produção) · branch em `scad-v2` (worktree)
 
 Este documento é a fonte de verdade das decisões de produto, regras de negócio e próximos passos. Atualizar sempre que uma decisão for tomada.
@@ -684,5 +684,42 @@ Depois de aprovar a v2.3.1 no teste dele, o Sergio pediu três coisas na mesma l
 - **Diagnóstico (arquivo real, `RP 02- Realização de Demanda.docx`):** o "2. FLUXOGRAMA" **não é imagem nem tabela** — é um **desenho do Visio colado**. Dentro do `.docx`: `word/media/image3.emf` (562 KB) + `word/embeddings/Desenho_do_Microsoft_Visio.vsdx` (63 KB), referenciados por `w:pict`/`v:imagedata` (rId10) e declarados em `[Content_Types].xml` como `image/x-emf`.
 - **Por que some:** EMF/WMF é formato vetorial do Windows; **nenhum navegador desenha**, e a biblioteca `docx-preview` não trata o tipo (não há uma ocorrência de "emf"/"wmf" no arquivo dela). Não é o SCAD apagando nada: o texto do resto do documento está todo lá.
 - **O que já foi feito (sem servidor):** a prévia reabre o pacote com JSZip, conta as figuras `word/media/*.emf|wmf` e mostra um **aviso no topo** — "N figura(s) deste documento não aparecem na prévia… desenho do Visio em EMF… abra o arquivo" — com botão para abrir o original. Se em algum caso o navegador deixar um `<img>` quebrado, o aviso entra no lugar da figura.
-- **Caminho para desenhar de verdade (não implementado, depende de decisão):** converter o EMF para PNG **no servidor, uma vez, na importação**, usando o GDI+ do próprio Windows (PowerShell + `System.Drawing`). Provado em 18/11 sobre o arquivo real: `Metafile` 989×573 → PNG de 64 KB com conteúdo (5,2% de pixels marcados). Custo: uma rotina a mais no servidor (dependência de PowerShell/GDI, só Windows), arquivo derivado em cache, limpeza junto com o documento, e reinício para publicar. O original nunca seria alterado — a conversão alimentaria apenas a prévia.
-- **Testes:** `scripts/previewcriteria.mjs` (novo, 38 checagens, só leitura): painel ao lado do arquivo com as duas colunas medidas, critérios na ordem certa, observação presente, placar no cabeçalho, "Ver na bancada" fechando a gaveta e trocando de tela, revisor com sinalizar/aprovar conforme o estado, abas no estreito, aviso do Visio no topo da prévia, zero exceção. Regressões no QA: `findingstest` (17), `changenotes` (30), `correctionui` (48), `ordertest` (12), `difftest`, `reviewtest`, `correctiontest` (65) — todos verdes.
+- **Caminho para desenhar de verdade (implementado — ver 24):** converter o EMF para PNG **no servidor, uma vez**, usando o GDI+ do próprio Windows (PowerShell + `System.Drawing`). O original nunca é alterado — a conversão alimenta apenas a prévia.
+- **Testes:** `scripts/previewcriteria.mjs` (novo, só leitura, ver 24.5 para a contagem atual): painel ao lado do arquivo com as duas colunas medidas, critérios na ordem certa, observação presente, placar no cabeçalho, "Ver na bancada" fechando a gaveta e trocando de tela, revisor com sinalizar/aprovar conforme o estado, abas no estreito, fluxograma desenhado, aviso no topo quando a conversão não acontece, zero exceção. Regressões no QA: `findingstest` (16), `changenotes` (30), `correctionui` (44), `ordertest` (12), `difftest` (28), `reviewtest` (24), `correctiontest` (65) — todos verdes.
+
+### 24. O fluxograma do Visio agora aparece na prévia (2026-11-18, no QA)
+
+A pergunta do Sergio era simples — "no documento real existe, na prévia não aparece" — e a resposta não era o que o diagnóstico da seção 23 supunha.
+
+#### 24.1 A causa real: o desenho não é imagem solta, é objeto OLE
+
+- **O que o `.docx` guarda (`RP 02- Realização de Demanda.docx`):** um `<w:object>` com `o:OLEObject ProgID="Visio.Drawing.15"` — o Visio colado como **objeto vinculado**, com a prévia dentro (`<v:shape style="width:446.4pt;height:258pt">` → `<v:imagedata r:id="rId10"/>` → `word/media/image3.emf`).
+- **Por que sumia:** não era só o EMF. A biblioteca da prévia entende `w:pict` (imagem VML comum — a logomarca de 63,6 pt desenha normal), mas **não trata `w:object`**: o objeto inteiro é descartado sem aviso. Trocar EMF por PNG sozinho não resolveria — a prova está em 24.2, a figura continuou invisível depois da primeira conversão.
+- **Consequência do diagnóstico errado:** a primeira versão entregava só um aviso ("N figura(s) não aparecem"). Funcionava como explicação, mas o usuário queria ver o desenho. Com a causa certa, dá para desenhar.
+
+#### 24.2 O que o servidor faz agora (só quando a prévia pede)
+
+- **`POST /api/preview/derive` `{ stored }`** → `{ converted, cached, figures, reason, url }`. A prévia chama isso **somente** quando encontra figura `word/media/*.emf|wmf` no pacote (a leitura é feita no cliente com o JSZip que já estava lá).
+- **`/derived/<stored>`** serve a cópia pronta (mesmo dono do arquivo é conferido, `Cache-Control: no-store`).
+- **A conversão** (`scripts/emf2png.ps1`, PowerShell 5.1 + GDI+): abre o pacote, converte cada EMF/WMF em PNG (fundo branco, no máximo 2200 px de largura), **troca as referências nos `.rels`**, garante `Extension="png"` em `[Content_Types].xml` e **transforma `w:object` em `w:pict`** (a imagem passa a ser um desenho VML que a prévia sabe ler; o `o:OLEObject` sai, porque fora do Word ele não serve para nada).
+- **O original nunca é tocado:** a cópia vive em `data/derived/<stored>`, em cache por mtime + marca `{version: 2}` — mudou a origem ou a rotina, converte de novo. Some junto com o documento (exclusão, limpeza de versão, correção descartada) e é apagada no `/api/reset`.
+- **Se não der (servidor fora do Windows, PowerShell bloqueado, formato estranho):** `converted: false` com motivo, e a prévia volta ao aviso da seção 23 — figura ausente explicada, com o botão de abrir o original. Nada quebra.
+- **Custo medido no arquivo real:** 2,6 s na primeira abertura (989×573, PNG de 63 KB); depois é cache, sem custo. O `spawn` usa `stdio: 'ignore'` e relatório por arquivo — pipe de filho é bloqueado no ambiente isolado do agente, e assim também não depende disso.
+
+#### 24.3 O que muda na tela
+
+- A figura aparece **no lugar certo do documento**, no tamanho do Word (596 px de largura = 446,4 pt), dentro do fluxo da página — não é anexo no rodapé.
+- No fim da prévia, uma linha discreta: *"As figuras do Visio aparecem aqui convertidas em imagem — o arquivo original não foi alterado."* Sem ela, alguém poderia achar que o arquivo foi modificado.
+- O aviso da seção 23 continua existindo, mas virou **caminho de exceção** (só quando a conversão falha).
+
+#### 24.4 Decisões que ficaram registradas
+
+- **Converter na abertura, não na importação.** A importação é o momento mais sensível (usuário esperando, arquivo em disco), e a maioria dos documentos não tem Visio. Converter sob demanda, com cache, deixa o custo só nos 1 ou 2 arquivos que precisam.
+- **Cópia derivada, nunca o original.** Se a conversão sair errada, o pior caso é uma prévia feia — o arquivo do acervo continua bit a bit igual. Baixar e abrir no Word não muda nada.
+- **Só Windows.** Depende do GDI+ do próprio sistema; em outro sistema o recurso simplesmente não existe (aviso volta). Não é portável e não vale a pena fingir que é.
+
+#### 24.5 Testes (QA 4188)
+
+- `previewcriteria.mjs`: **44 checagens**. As novas: fluxograma desenhado (SVG ≥ 400 px), tamanho de documento (596 px), **a figura vem do PNG convertido (989×573, conferido lendo o blob desenhado)**, nota de conversão presente, nenhum aviso de figura ausente quando a conversão funciona, e — com `fetch` do pedido de conversão forçado a falhar — o aviso aparece no topo e o painel de critérios continua funcionando. Capturas: `shots/preview-07-fluxograma.png` e `shots/preview-06-sem-conversao.png`.
+- Regressões no QA, todas verdes: `findingstest` (16), `correctionui` (44), `changenotes` (30), `ordertest` (12), `difftest` (28), `reviewtest` (24), `correctiontest` (65).
+- **Pegadinha anotada:** `ordertest.mjs` recebe **`porta processId`** (não o PID do processo do servidor) e `reviewtest.mjs` quer a **URL completa** — passar errado dá "lista vazia" e parece defeito de ordenação.

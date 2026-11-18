@@ -8,7 +8,7 @@ import http from 'node:http';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { exec } from 'node:child_process';
+import { exec, spawn } from 'node:child_process';
 import { createReadStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,8 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = process.env.SCAD_DATA ? path.resolve(process.env.SCAD_DATA) : path.join(ROOT, 'data');
 const FILES_DIR = path.join(DATA_DIR, 'files');
+/* Cópias de .docx com os desenhos do Visio já em PNG (ver scripts/emf2png.ps1). */
+const DERIVED_DIR = path.join(DATA_DIR, 'derived');
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const PORT = Number(process.env.PORT || process.argv[2] || 4177);
@@ -917,6 +919,13 @@ async function handleApi(req, res, pathname, url) {
         return { rev: state.rev, state: scopedState(processFromRequest(req)), removed };
       });
       for (const doc of doomed) {
+        for (const nome of [
+          doc.stored,
+          doc.correction?.stored,
+          ...array(doc.versions).map((version) => version.stored),
+        ].filter(Boolean)) {
+          await esquecerDerivado(nome);
+        }
         if (!doc.stored) continue;
         try {
           await fs.unlink(path.join(FILES_DIR, doc.stored));
@@ -1216,6 +1225,7 @@ async function handleApi(req, res, pathname, url) {
           ...array(item.versions).map((version) => version.stored),
         ].filter(Boolean);
         for (const stored of files) {
+          await esquecerDerivado(stored);
           try {
             await fs.unlink(path.join(FILES_DIR, stored));
           } catch {
@@ -1334,6 +1344,7 @@ async function handleApi(req, res, pathname, url) {
           activity: scopedActivity(doc.processId, 40),
         };
       });
+      await esquecerDerivado(correction.stored);
       try {
         await fs.unlink(path.join(FILES_DIR, correction.stored));
       } catch {
@@ -1663,7 +1674,31 @@ async function handleApi(req, res, pathname, url) {
     } catch {
       /* pasta vazia */
     }
+    try {
+      const derivadas = await fs.readdir(DERIVED_DIR);
+      await Promise.all(derivadas.map((entry) => fs.rm(path.join(DERIVED_DIR, entry), { force: true })));
+    } catch {
+      /* pasta vazia */
+    }
     return sendJson(res, 200, result);
+  }
+
+  if (pathname === '/api/preview/derive' && method === 'POST') {
+    const body = await readJson(req);
+    const stored = typeof body.stored === 'string' ? body.stored.trim() : '';
+    if (!stored) throw new HttpError(400, 'Arquivo ausente.');
+    if (!fileOwner(stored)) throw new HttpError(404, 'Arquivo não encontrado.');
+    if (!/\.docx$/i.test(stored)) {
+      return sendJson(res, 200, { converted: false, reason: 'só converto .docx', url: null });
+    }
+    const resultado = await derivedFor(stored);
+    return sendJson(res, 200, {
+      converted: Boolean(resultado.ok),
+      cached: Boolean(resultado.cached),
+      figures: resultado.figuras ?? null,
+      reason: resultado.reason || null,
+      url: resultado.ok ? `/derived/${encodeURIComponent(stored)}` : null,
+    });
   }
 
   throw new HttpError(404, 'Rota de API não encontrada.');
@@ -1743,6 +1778,151 @@ async function serveFile(req, res, stored) {
   createReadStream(full).pipe(res);
 }
 
+/* ------------------------------------------------- desenho do Visio (EMF) */
+
+/**
+ * Fluxograma colado do Visio entra no .docx como EMF/WMF, formato que nenhum
+ * navegador desenha. A prévia chama este pedido quando encontra uma dessas
+ * figuras; aqui a cópia é preparada por `scripts/emf2png.ps1` (GDI+ do próprio
+ * Windows) e guardada em data/derived. O arquivo original nunca é alterado.
+ */
+const conversionJobs = new Map();
+/* Sobe quando a conversão muda: cópias antigas são refeitas. */
+const DERIVED_VERSION = 2;
+const DERIVED_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+/** Descarta a cópia derivada de um arquivo (usado quando ele sai do banco). */
+async function esquecerDerivado(stored) {
+  await fs.rm(path.join(DERIVED_DIR, stored), { force: true }).catch(() => {});
+  await fs.rm(path.join(DERIVED_DIR, `${stored}.json`), { force: true }).catch(() => {});
+}
+
+function converterDesenhos(origem, destino) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      return resolve({ ok: false, reason: 'a conversão só existe no Windows' });
+    }
+    const relatorio = `${destino}.relatorio.json`;
+    let encerrado = false;
+    let timer = null;
+    const terminar = (resultado) => {
+      if (encerrado) return;
+      encerrado = true;
+      if (timer) clearTimeout(timer);
+      resolve(resultado);
+    };
+    let filho;
+    try {
+      // stdio 'ignore' de propósito: o relatório volta por arquivo, não por pipe.
+      filho = spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          path.join(ROOT, 'scripts', 'emf2png.ps1'),
+          '-Origem',
+          origem,
+          '-Destino',
+          destino,
+          '-Relatorio',
+          relatorio,
+        ],
+        { windowsHide: true, stdio: 'ignore' }
+      );
+    } catch (err) {
+      return terminar({ ok: false, reason: `não consegui chamar o PowerShell (${err.message})` });
+    }
+    timer = setTimeout(() => {
+      try {
+        filho.kill();
+      } catch {
+        /* já saiu */
+      }
+      terminar({ ok: false, reason: 'a conversão demorou demais' });
+    }, 45000);
+    filho.on('error', (err) => terminar({ ok: false, reason: `PowerShell indisponível (${err.message})` }));
+    filho.on('close', async (codigo) => {
+      let info = null;
+      try {
+        info = JSON.parse(await fs.readFile(relatorio, 'utf8'));
+      } catch {
+        /* sem relatório */
+      }
+      await fs.rm(relatorio, { force: true }).catch(() => {});
+      if (codigo === 0 && info) return terminar({ ok: true, figuras: info.figuras ?? null });
+      if (codigo === 3) return terminar({ ok: false, reason: 'este documento não tem desenho para converter' });
+      return terminar({ ok: false, reason: info?.erro || `a conversão falhou (código ${codigo})` });
+    });
+  });
+}
+
+/** Prepara (ou reaproveita) a cópia desenhável de um .docx. */
+async function derivedFor(stored) {
+  const origem = path.join(FILES_DIR, stored);
+  const destino = path.join(DERIVED_DIR, stored);
+  const marca = path.join(DERIVED_DIR, `${stored}.json`);
+  let statOrigem;
+  try {
+    statOrigem = await fs.stat(origem);
+  } catch {
+    return { ok: false, reason: 'arquivo não está no disco' };
+  }
+  try {
+    const statDestino = await fs.stat(destino);
+    const info = JSON.parse(await fs.readFile(marca, 'utf8'));
+    if (statDestino.mtimeMs >= statOrigem.mtimeMs && info?.version === DERIVED_VERSION) {
+      return { ok: true, cached: true, figuras: info.figures ?? null };
+    }
+  } catch {
+    /* ainda não existe (ou é de uma versão antiga da conversão): refaz */
+  }
+  if (conversionJobs.has(stored)) return conversionJobs.get(stored);
+  const tarefa = (async () => {
+    await fs.mkdir(DERIVED_DIR, { recursive: true });
+    const resultado = await converterDesenhos(origem, destino);
+    if (resultado.ok) {
+      await fs
+        .writeFile(
+          marca,
+          JSON.stringify({ version: DERIVED_VERSION, figures: resultado.figuras, at: now() }),
+          'utf8'
+        )
+        .catch(() => {});
+      console.log(`[scad] figura do Visio convertida para a prévia: ${stored}`);
+    } else {
+      console.warn(`[scad] prévia de ${stored} sem conversão: ${resultado.reason}`);
+    }
+    return resultado;
+  })();
+  conversionJobs.set(stored, tarefa);
+  try {
+    return await tarefa;
+  } finally {
+    conversionJobs.delete(stored);
+  }
+}
+
+async function serveDerived(req, res, stored) {
+  if (!fileOwner(stored)) throw new HttpError(404, 'Arquivo não encontrado.');
+  const full = path.join(DERIVED_DIR, stored);
+  let stat;
+  try {
+    stat = await fs.stat(full);
+  } catch {
+    throw new HttpError(404, 'Esta prévia ainda não foi preparada.');
+  }
+  res.writeHead(200, {
+    'Content-Type': DERIVED_MIME,
+    'Content-Length': stat.size,
+    'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(stored)}`,
+    'Cache-Control': 'no-store',
+  });
+  createReadStream(full).pipe(res);
+}
+
 /* ---------------------------------------------------------------- estático */
 
 async function serveStatic(req, res, pathname) {
@@ -1789,6 +1969,8 @@ const server = http.createServer((req, res) => {
         await handleApi(req, res, pathname, url);
       } else if (pathname.startsWith('/files/')) {
         await serveFile(req, res, pathname.slice('/files/'.length));
+      } else if (pathname.startsWith('/derived/')) {
+        await serveDerived(req, res, decodeURIComponent(pathname.slice('/derived/'.length)));
       } else if (req.method === 'GET' || req.method === 'HEAD') {
         await serveStatic(req, res, pathname);
       } else {
@@ -1821,6 +2003,7 @@ async function backupBeforeMigration(label) {
 
 async function boot() {
   await fs.mkdir(FILES_DIR, { recursive: true });
+  await fs.mkdir(DERIVED_DIR, { recursive: true });
   let parsed = null;
   let readError = null;
   try {

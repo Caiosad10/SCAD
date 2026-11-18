@@ -1891,6 +1891,14 @@ async function clearNote(id) {
  */
 function previewBody(name, mime, url) {
   const kind = fileKind(name, mime);
+  // O nome guardado (para o servidor preparar a cópia com os desenhos do Visio)
+  // sai do próprio endereço do arquivo: /files/<guardado>.
+  let stored = '';
+  try {
+    stored = decodeURIComponent(new URL(url, location.origin).pathname.replace(/^\/files\//, ''));
+  } catch {
+    stored = '';
+  }
   if (kind === 'pdf') {
     return {
       kind,
@@ -1911,7 +1919,7 @@ function previewBody(name, mime, url) {
         `<p class="sheet__note">Prévia montada no seu navegador a partir do arquivo original — o layout pode variar um pouco em relação ao Word, e o arquivo em si não é alterado.</p>`,
       montar: (host) => {
         const alvo = host?.querySelector?.('[data-docx-host]');
-        if (alvo) montarPreviaDocx(alvo, url, { nome: name });
+        if (alvo) montarPreviaDocx(alvo, url, { nome: name, stored });
       },
     };
   }
@@ -1927,7 +1935,7 @@ function previewBody(name, mime, url) {
       montar: (host) => {
         const alvo = host?.querySelector?.('[data-doc-text-host]');
         const nota = host?.querySelector?.('[data-doc-note]');
-        if (alvo) montarPreviaDoc(alvo, url, { nome: name, nota });
+        if (alvo) montarPreviaDoc(alvo, url, { nome: name, nota, stored });
       },
     };
   }

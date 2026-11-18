@@ -162,28 +162,54 @@ function ajustarLargura(area) {
 }
 
 /**
- * Avisa sobre figuras que o navegador não consegue desenhar.
+ * Conta, dentro do pacote .docx, os desenhos que o navegador não abre.
  *
- * Acontece de verdade com fluxogramas colados do Visio: o Word guarda o desenho
- * como EMF/WMF (formato vetorial só do Windows), a biblioteca não desenha o
- * formato e a figura simplesmente "some" — parece que o documento está vazio.
- * Aqui o pacote é reaberto para contar essas figuras e o aviso fica no topo da
- * prévia, com o caminho para abrir o arquivo original.
+ * Acontece de verdade com fluxograma colado do Visio: o Word guarda o desenho
+ * como EMF/WMF (formato vetorial só do Windows). O servidor sabe converter em
+ * PNG (ver `pedirPreviaConvertida`); esta leitura é o que decide se vale pedir.
  */
-async function avisarFigurasQueNaoDesenham(alvo, url, dados) {
-  let presas = [];
-  let visio = false;
+async function lerDesenhos(dados) {
   try {
     const zip = window.JSZip;
-    if (zip && typeof zip.loadAsync === 'function') {
-      const pacote = await zip.loadAsync(dados);
-      const nomes = Object.keys(pacote.files || {});
-      presas = nomes.filter((nome) => /^word\/media\/[^/]+\.(emf|wmf)$/i.test(nome));
-      visio = nomes.some((nome) => /^word\/embeddings\/[^/]+\.vsdx?$/i.test(nome));
-    }
+    if (!zip || typeof zip.loadAsync !== 'function') return { presas: [], visio: false };
+    const pacote = await zip.loadAsync(dados);
+    const nomes = Object.keys(pacote.files || {});
+    return {
+      presas: nomes.filter((nome) => /^word\/media\/[^/]+\.(emf|wmf)$/i.test(nome)),
+      visio: nomes.some((nome) => /^word\/embeddings\/[^/]+\.vsdx?$/i.test(nome)),
+    };
   } catch {
-    /* pacote ilegível: a leitura de imagens abaixo ainda cobre o caso comum */
+    return { presas: [], visio: false };
   }
+}
+
+/** Pede ao servidor a cópia do .docx com os desenhos já em PNG. */
+async function pedirPreviaConvertida(stored) {
+  try {
+    const resposta = await fetch('/api/preview/derive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ stored }),
+    });
+    if (!resposta.ok) return null;
+    return await resposta.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Avisa sobre figuras que continuaram sem desenho.
+ *
+ * Caminho de exceção: quando a conversão não foi possível (servidor fora do
+ * Windows, PowerShell bloqueado, formato desconhecido). Em vez de deixar um
+ * espaço vazio — que parece documento quebrado — o aviso entra no topo, com o
+ * caminho para abrir o arquivo original.
+ */
+async function avisarFigurasQueNaoDesenham(alvo, url, desenhos) {
+  const presas = desenhos?.presas || [];
+  const visio = Boolean(desenhos?.visio);
 
   // Imagem que o desenho tentou mostrar e o navegador não abriu (outros formatos).
   const figuras = [...alvo.querySelectorAll('img')];
@@ -221,7 +247,37 @@ async function avisarFigurasQueNaoDesenham(alvo, url, dados) {
   for (const img of quebradas) img.replaceWith(caixa.cloneNode(true));
 }
 
-export async function montarPreviaDocx(alvo, url, { nome = 'documento' } = {}) {
+/**
+ * Devolve o pacote que a prévia deve desenhar, trocando-o pela cópia com os
+ * desenhos do Visio em PNG quando o servidor conseguir converter.
+ */
+async function prepararDesenhos(dados, stored, aoEsperar) {
+  const desenhos = await lerDesenhos(dados);
+  if (!desenhos.presas.length || !stored) return { dados, convertida: false, desenhos };
+  aoEsperar?.('Convertendo a figura do Visio para aparecer aqui…');
+  const previa = await pedirPreviaConvertida(stored);
+  if (!previa?.url) return { dados, convertida: false, desenhos };
+  const pronta = await fetch(previa.url, { credentials: 'same-origin' });
+  if (!pronta.ok) return { dados, convertida: false, desenhos };
+  const bytes = await pronta.arrayBuffer();
+  if (!bytes.byteLength) return { dados, convertida: false, desenhos };
+  return { dados: bytes, convertida: true, desenhos };
+}
+
+/** Nota do fim da prévia depois de desenhar o documento. */
+async function finalizarDesenhos(alvo, url, desenhos, convertida) {
+  if (convertida) {
+    alvo.insertAdjacentHTML(
+      'beforeend',
+      '<p class="sheet__note">As figuras do Visio aparecem aqui convertidas em imagem — ' +
+        'o arquivo original não foi alterado.</p>'
+    );
+    return;
+  }
+  await avisarFigurasQueNaoDesenham(alvo, url, desenhos);
+}
+
+export async function montarPreviaDocx(alvo, url, { nome = 'documento', stored = '' } = {}) {
   const espera = document.createElement('p');
   espera.className = 'preview-loading';
   espera.textContent = 'Montando a prévia do documento…';
@@ -233,13 +289,17 @@ export async function montarPreviaDocx(alvo, url, { nome = 'documento' } = {}) {
       fetch(url, { credentials: 'same-origin' }),
     ]);
     if (!resposta.ok) throw new Error(`o servidor respondeu ${resposta.status}`);
-    const dados = await resposta.arrayBuffer();
-    if (!dados.byteLength) throw new Error('arquivo vazio');
+    const baixado = await resposta.arrayBuffer();
+    if (!baixado.byteLength) throw new Error('arquivo vazio');
+
+    const { dados, convertida, desenhos } = await prepararDesenhos(baixado, stored, (texto) => {
+      espera.textContent = texto;
+    });
 
     alvo.textContent = '';
     await lib.renderAsync(dados, alvo, alvo, OPCOES_DOCX);
     ajustarLargura(alvo);
-    avisarFigurasQueNaoDesenham(alvo, url, dados);
+    await finalizarDesenhos(alvo, url, desenhos, convertida);
     // imagens e fontes chegam depois e podem mudar a largura da página
     setTimeout(() => ajustarLargura(alvo), 80);
     const aoRedimensionar = () => {
@@ -274,7 +334,7 @@ export async function montarPreviaDocx(alvo, url, { nome = 'documento' } = {}) {
  * Caso especial que existe de verdade: arquivo com extensão .doc que por dentro
  * é um .docx. Nesse caso a prévia completa (a mesma dos .docx) é montada.
  */
-export async function montarPreviaDoc(alvo, url, { nome = 'documento', nota = null } = {}) {
+export async function montarPreviaDoc(alvo, url, { nome = 'documento', nota = null, stored = '' } = {}) {
   const espera = document.createElement('p');
   espera.className = 'preview-loading';
   espera.textContent = 'Lendo o texto do documento…';
@@ -299,11 +359,14 @@ export async function montarPreviaDoc(alvo, url, { nome = 'documento', nota = nu
       if (err.codigo !== 'docx') throw err;
       // O arquivo é um .docx com nome antigo: vale a prévia completa.
       const lib = await bibliotecas();
+      const { dados: prontos, convertida, desenhos } = await prepararDesenhos(dados, stored, (texto) => {
+        espera.textContent = texto;
+      });
       alvo.textContent = '';
       alvo.classList.replace('preview-doc', 'preview-docx');
-      await lib.renderAsync(dados, alvo, alvo, OPCOES_DOCX);
+      await lib.renderAsync(prontos, alvo, alvo, OPCOES_DOCX);
       ajustarLargura(alvo);
-      avisarFigurasQueNaoDesenham(alvo, url, dados);
+      await finalizarDesenhos(alvo, url, desenhos, convertida);
       setTimeout(() => ajustarLargura(alvo), 80);
       trocarNota(
         'Este arquivo tem extensão .doc, mas por dentro é um .docx — por isso a prévia completa funciona aqui.'

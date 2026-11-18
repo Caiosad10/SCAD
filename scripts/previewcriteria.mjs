@@ -222,6 +222,18 @@ const gaveta = () =>
       abaAtiva: d.querySelector('[data-preview-view][aria-pressed="true"]')?.dataset.previewView || '',
       visao: d.querySelector('.compare--preview')?.getAttribute('data-view') || '',
       figuras: [...d.querySelectorAll('.preview-nao-desenha')].map((f) => f.innerText.replace(/\\s+/g, ' ').trim()),
+      imagens: [...d.querySelectorAll('[data-preview-host] img')].map((i) => i.naturalWidth),
+      svgDesenhos: [...d.querySelectorAll('[data-preview-host] svg')].map((s) => Number(s.getAttribute('width')) || 0),
+      maiorImagem: Math.max(
+        0,
+        ...[...d.querySelectorAll('[data-preview-host] img')].map((i) => i.naturalWidth),
+        ...[...d.querySelectorAll('[data-preview-host] svg')].map((s) => Number(s.getAttribute('width')) || 0)
+      ),
+      figuraDesenhada: [...d.querySelectorAll('[data-preview-host] img')].some((i) => i.naturalWidth >= 800),
+      figuraComoSvg: [...d.querySelectorAll('[data-preview-host] svg')].some((s) => (Number(s.getAttribute('width')) || 0) >= 400),
+      notaConversao: [...d.querySelectorAll('[data-preview-host] .sheet__note')]
+        .map((n) => n.textContent.replace(/\\s+/g, ' ').trim())
+        .find((t) => /convertid/i.test(t)) || '',
       avisoNoTopo: (() => {
         const caixa = d.querySelector('[data-preview-host] .preview-nao-desenha');
         const moldura = d.querySelector('[data-preview-host] .docx-wrapper');
@@ -267,15 +279,48 @@ check('cabeçalho do painel mostra o placar de aprovação', /aprovad/i.test(g?.
 check('resumo do topo mostra versão e verificações', /v\d+ · \d+\/\d+ verifica/i.test(g?.meta || ''), g?.meta);
 check('gaveta não estoura a largura da tela', (g?.estoura ?? 99) <= 1, `estouro: ${g?.estoura}`);
 
-check('fluxograma avisa no lugar da figura que não desenha', (g?.figuras || []).length >= 1, JSON.stringify(g?.figuras));
 check(
-  'aviso explica que é desenho do Visio (EMF) e oferece abrir o arquivo',
-  (g?.figuras || []).some((t) => /visio/i.test(t) && /EMF/i.test(t)) && g?.avisoComLink === true,
-  g?.figuras?.[0]?.slice(0, 180)
+  'o fluxograma do Visio aparece desenhado',
+  (g?.maiorImagem || 0) >= 400,
+  JSON.stringify({ imgs: g?.imagens, svgs: g?.svgDesenhos })
 );
-check('aviso das figuras fica no topo da prévia', g?.avisoNoTopo === true, String(g?.avisoNoTopo));
+check(
+  'a figura aparece no tamanho do documento (446,4 pt ≈ 596 px de largura)',
+  (g?.maiorImagem || 0) >= 500 && (g?.maiorImagem || 0) <= 700,
+  `maior figura: ${g?.maiorImagem} px`
+);
+check('prévia avisa que as figuras foram convertidas', /convertid/i.test(g?.notaConversao || ''), g?.notaConversao);
+check('nenhum aviso de figura ausente quando a conversão funciona', (g?.figuras || []).length === 0, JSON.stringify(g?.figuras));
 check('texto do documento continua na prévia ("2. FLUXOGRAMA")', /FLUXOGRAMA/i.test(g?.textoDocx || ''), (g?.textoDocx || '').length + ' caracteres');
 await shot('preview-01-rp-criterios');
+// O fluxograma está no meio do documento: rola até ele e guarda a prova visual.
+await evalJs(`(() => {
+  const figuras = [...document.querySelectorAll('[data-preview-host] svg')];
+  const alvo = figuras.find((s) => (Number(s.getAttribute('width')) || 0) >= 400);
+  if (!alvo) return false;
+  alvo.scrollIntoView({ block: 'center' });
+  return true;
+})()`);
+await sleep(600);
+await shot('preview-07-fluxograma');
+// Prova de que a figura desenhada é o PNG convertido (989 x 573), não uma caixa vazia.
+const figura = await evalJs(`(async () => {
+  const svgs = [...document.querySelectorAll('[data-preview-host] svg')];
+  const alvo = svgs.find((s) => (Number(s.getAttribute('width')) || 0) >= 400);
+  if (!alvo) return null;
+  const imagem = alvo.querySelector('image');
+  if (!imagem) return null;
+  const href = imagem.getAttribute('href') || imagem.getAttribute('xlink:href') || '';
+  if (!href.startsWith('blob:')) return { href: href.slice(0, 24), largura: 0, altura: 0, tipo: '' };
+  const blob = await (await fetch(href)).blob();
+  const bitmap = await createImageBitmap(blob);
+  return { href: 'blob', largura: bitmap.width, altura: bitmap.height, tipo: blob.type };
+})()`);
+check(
+  'a figura vem do PNG convertido (989 x 573)',
+  figura?.largura === 989 && figura?.altura === 573 && (figura?.tipo === '' || figura?.tipo === 'image/png'),
+  JSON.stringify(figura)
+);
 
 /* ---------------------------------------------------- 2. rodapé e navegação */
 check('rodapé oferece "Ver na bancada"', (g?.botoesRodape || []).some((t) => /Ver na bancada/i.test(t)), JSON.stringify(g?.botoesRodape));
@@ -349,6 +394,35 @@ await click('[data-preview-view="file"]');
 await sleep(300);
 const gv = await gaveta();
 check('estreito: volta para o arquivo', gv?.arquivoVisivel === true && gv?.painelVisivel === false);
+
+/* ------------------- 7. quando o servidor não consegue converter (aviso) */
+await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+await click('dialog[open] .iconbtn[data-close]');
+await sleep(400);
+await perfil(SERGIO);
+await goto(`#/documentos/${rp.id}`);
+// Simula o servidor sem conversão: a prévia precisa avisar em vez de sumir com a figura.
+await evalJs(`(() => {
+  const original = window.fetch;
+  window.__scadFetch = original;
+  window.fetch = (entrada, opcoes) =>
+    String(entrada).includes('/api/preview/derive')
+      ? Promise.resolve(new Response('{"error":"sem conversão"}', { status: 500 }))
+      : original(entrada, opcoes);
+  return true;
+})()`);
+await click(`[data-action="doc-preview"][data-id="${rp.id}"]`);
+await sleep(3000);
+const gsem = await gaveta();
+check('sem conversão: a figura que não desenha deixa aviso', (gsem?.figuras || []).length >= 1, JSON.stringify(gsem?.figuras));
+check(
+  'sem conversão: o aviso explica o Visio (EMF) e oferece abrir o arquivo',
+  (gsem?.figuras || []).some((t) => /visio/i.test(t) && /EMF/i.test(t)) && gsem?.avisoComLink === true,
+  gsem?.figuras?.[0]?.slice(0, 180)
+);
+check('sem conversão: o aviso fica no topo da prévia', gsem?.avisoNoTopo === true, String(gsem?.avisoNoTopo));
+check('sem conversão: o painel de critérios continua funcionando', (gsem?.rotulos || []).length === rpChecks.length);
+await shot('preview-06-sem-conversao');
 
 check('nenhuma exceção de JavaScript', exceptions.length === 0, exceptions.slice(0, 3).join(' | '));
 
