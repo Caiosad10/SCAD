@@ -93,7 +93,7 @@ export function changeNoteHtml({ texto = '', autor = '', quando = '', editavel =
   const corpo = texto
     ? `<p class="changenote__text">${esc(texto)}</p>`
     : `<p class="changenote__text changenote__text--vazio">` +
-      `Quem corrigiu não descreveu o que mudou — a comparação ao lado continua valendo, mas é preciso procurar as diferenças.` +
+      `Quem corrigiu não descreveu o que mudou.` +
       `</p>`;
   const rodape =
     texto && (autor || quando)
@@ -105,9 +105,6 @@ export function changeNoteHtml({ texto = '', autor = '', quando = '', editavel =
     : '';
   return (
     `<div class="changenote">` +
-    `<p class="changenote__lead">` +
-    `Este arquivo não guarda texto para comparar (PDF digitalizado, imagem ou planilha). ` +
-    `O que mudou:</p>` +
     corpo +
     rodape +
     (editar ? `<div class="changenote__foot">${editar}</div>` : '') +
@@ -120,8 +117,7 @@ export function changeNoteFormHtml({ texto = '', max = 1200 } = {}) {
   return (
     `<div class="changenote changenote--form">` +
     `<label class="changenote__label" for="change-note-input">O que mudou nesta versão</label>` +
-    `<p class="changenote__hint">Descreva o que o revisor deve conferir: o que foi removido, alterado ou corrigido. ` +
-    `Vale como apoio à leitura — o arquivo continua sendo o registro.</p>` +
+    `<p class="changenote__hint">O que o revisor deve conferir nesta versão.</p>` +
     `<textarea id="change-note-input" class="changenote__input" rows="5" maxlength="${Number(max) || 1200}" ` +
     `placeholder="Ex.: removi o item 4.2, corrigi o nome do responsável e troquei a tabela de prazos.">${esc(texto)}</textarea>` +
     `<div class="changenote__foot">` +
@@ -141,8 +137,7 @@ export function diffBodyHtml(resultado, { limite = 80 } = {}) {
   if (!trechos.length) {
     return (
       `<div class="diff__vazio">${icon('check', 18)}` +
-      `<p>As duas versões têm <b>o mesmo texto</b> — a diferença, se houver, é de formatação, imagem ou layout, ` +
-      `que esta comparação não avalia.</p></div>`
+      `<p>As duas versões têm <b>o mesmo texto</b> — a diferença, se houver, está em imagem ou formatação.</p></div>`
     );
   }
 
@@ -190,8 +185,6 @@ export function diffBodyHtml(resultado, { limite = 80 } = {}) {
   const restantes = trechos.length - visiveis.length;
   return (
     `<ol class="diff">${blocos}</ol>` +
-    (restantes > 0 ? `<p class="diff__more">… e mais ${restantes} trecho(s) — abra a versão corrigida para ver o resto.</p>` : '') +
-    `<p class="diff__note">Trechos copiados do <b>texto dos dois arquivos</b> — é o conteúdo do documento, não informação do sistema. ` +
-    `Imagens, tabelas e formatação não entram. Serve para o revisor achar o que mudou — o documento em si continua valendo como anexo.</p>`
+    (restantes > 0 ? `<p class="diff__more">… e mais ${restantes} trecho(s) — abra a versão corrigida para ver o resto.</p>` : '')
   );
 }

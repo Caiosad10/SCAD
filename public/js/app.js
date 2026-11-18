@@ -1006,7 +1006,7 @@ function showProfilePicker(profiles = []) {
     eyebrow: 'Perfil',
     body:
       (options || `<p class="sheet-message">Nenhum perfil cadastrado.</p>`) +
-      `<p class="sheet__note">O nome identifica suas ações no histórico. Você pode trocar depois pelo cabeçalho.</p>`,
+      `<p class="sheet__note">O nome identifica suas ações no histórico.</p>`,
     footer: `<button type="button" class="btn btn--ghost" data-close-profile>Só olhando</button>`,
   });
   dialog.querySelectorAll('[data-profile-id]').forEach((button) => {
@@ -1110,7 +1110,7 @@ function showNewProcess(collectionId) {
       `<textarea id="proc-desc" rows="2" maxlength="1000" placeholder="Objetivo ou escopo deste processo"></textarea></div>` +
       `<div class="field"><label for="proc-source">Copiar critérios de</label>` +
       `<select id="proc-source"><option value="">Começar sem critérios</option>${sourceOptions}</select>` +
-      `<p class="field__hint">Marque abaixo quais critérios copiar; é só uma cópia, os processos continuam independentes.</p></div>` +
+      `<p class="field__hint">Marque os critérios a copiar — a cópia não altera o processo de origem.</p></div>` +
       `<div id="copy-criteria" class="copy-criteria"></div>`,
     footer:
       `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
@@ -1270,7 +1270,7 @@ function showCopyCriteria() {
       `<div class="field"><label for="copy-source">Processo de origem</label>` +
       `<select id="copy-source">${sourceOptions}</select></div>` +
       `<div class="copy-criteria" id="copy-list"></div>` +
-      `<p class="sheet__note">A cópia é independente: alterar um critério aqui não muda o processo de origem.</p>`,
+      `<p class="sheet__note">A cópia é independente do processo de origem.</p>`,
     footer:
       `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
       `<button type="button" class="btn btn--primary" data-copy>Copiar selecionados</button>`,
@@ -1390,7 +1390,7 @@ function openFlagReview(docId, checkId, { onDone = null } = {}) {
     eyebrow: `Revisão · ${criterion?.label || 'critério'}`,
     body:
       `<p class="sheet-message">${esc(doc.name)}</p>` +
-      `<p class="sheet__note">O critério fica em <b>atenção</b> e os demais verificados são aprovados. A mensagem é obrigatória e fica visível para o analista.</p>` +
+      `<p class="sheet__note">O critério fica em <b>atenção</b>; a mensagem vai para o analista.</p>` +
       `<div class="field"><label for="review-flag-message">O que precisa ser corrigido?</label>` +
       `<textarea id="review-flag-message" rows="3" maxlength="2000" placeholder="Ex.: a nota não cita a evidência do relatório."></textarea>` +
       `<p class="field__hint" data-flag-hint>Escreva a mensagem para sinalizar.</p></div>`,
@@ -1916,7 +1916,7 @@ function previewBody(name, mime, url) {
       kind: 'docx',
       body:
         `<div class="preview-docx" data-docx-host></div>` +
-        `<p class="sheet__note">Prévia montada no seu navegador a partir do arquivo original — o layout pode variar um pouco em relação ao Word, e o arquivo em si não é alterado.</p>`,
+        `<p class="sheet__note">Prévia aproximada — o layout pode diferir do Word.</p>`,
       montar: (host) => {
         const alvo = host?.querySelector?.('[data-docx-host]');
         if (alvo) montarPreviaDocx(alvo, url, { nome: name, stored });
@@ -1930,8 +1930,7 @@ function previewBody(name, mime, url) {
       kind: 'doc',
       body:
         `<div class="preview-doc" data-doc-text-host></div>` +
-        `<p class="sheet__note" data-doc-note>Prévia em <b>texto</b> — o formato .doc não guarda o layout para o navegador. ` +
-        `O texto é o do documento inteiro, na ordem; imagens e tabelas não aparecem como no Word.</p>`,
+        `<p class="sheet__note" data-doc-note>Prévia em <b>texto</b> — este formato não guarda o layout.</p>`,
       montar: (host) => {
         const alvo = host?.querySelector?.('[data-doc-text-host]');
         const nota = host?.querySelector?.('[data-doc-note]');
@@ -2324,7 +2323,7 @@ async function montarDiffCorrecao(dialog, doc, correction) {
       corpo.innerHTML =
         diffAvisoHtml(
           'Não foi possível ler o texto das versões.',
-          'A comparação lado a lado continua valendo — abra as duas versões e confira.'
+          'Abra as duas versões e confira.'
         ) +
         (correction.changeNote
           ? changeNoteHtml({ texto: correction.changeNote, autor, quando })
@@ -2372,7 +2371,7 @@ function openAddCorrection(docId) {
     title: 'Adicionar correção',
     eyebrow: `Documento · correção v${version}`,
     body:
-      `<p class="sheet__note">Envie a nova versão do arquivo corrigido. A versão atual continua disponível para comparação — nada é apagado.</p>` +
+      `<p class="sheet__note">Envie a nova versão do arquivo corrigido.</p>` +
       `<div class="field"><label for="correction-name">Nome do documento</label>` +
       `<input id="correction-name" type="text" maxlength="220" value="${esc(doc.name)}" autocomplete="off"></div>` +
       `<div class="dropzone" id="correction-dropzone" role="button" tabindex="0" aria-label="Selecionar o arquivo corrigido">` +
@@ -2385,8 +2384,8 @@ function openAddCorrection(docId) {
       `<div class="correction-selected" id="correction-selected" hidden></div>` +
       `<div class="changenote changenote--form" id="correction-changed" hidden>` +
       `<label class="changenote__label" for="correction-changed-text">O que mudou</label>` +
-      `<p class="changenote__hint" id="correction-changed-hint">Este arquivo não tem texto para comparar, ` +
-      `então o painel "O que mudou" mostraria o vazio. Descreva em poucas linhas o que o revisor deve conferir.</p>` +
+      `<p class="changenote__hint" id="correction-changed-hint">Este arquivo não tem texto para comparar — ` +
+      `descreva o que mudou.</p>` +
       `<textarea id="correction-changed-text" class="changenote__input" rows="4" maxlength="1200" ` +
       `placeholder="Ex.: removi o item 4.2, corrigi o nome do responsável e troquei a tabela de prazos."></textarea>` +
       `</div>` +
@@ -2563,7 +2562,7 @@ function openVersions(docId) {
     title: 'Versões do documento',
     eyebrow: `${doc.name} · ${total} versões`,
     body:
-      `<p class="sheet__note">O arquivo antigo nunca é apagado: a comparação fica disponível a qualquer tempo.</p>` +
+      `<p class="sheet__note">As versões antigas ficam guardadas para comparação.</p>` +
       `<div class="version-list">${rows}${currentRow}</div>`,
     footer: `<button type="button" class="btn btn--primary" data-close>Fechar</button>`,
   });
@@ -2598,8 +2597,7 @@ function openReopenReview(docId) {
     eyebrow: `Revisão · v${currentVersion(doc)}`,
     body:
       `<p class="sheet-message">${esc(doc.name)}</p>` +
-      `<p class="sheet__note">O documento volta para a fila de revisão e as verificações precisam ser aprovadas de novo. ` +
-      `Use quando precisar corrigir algo que já foi aprovado — um erro seu, uma ideia melhor ou um apontamento de auditoria.</p>` +
+      `<p class="sheet__note">O documento volta para a fila de revisão e as verificações precisam ser aprovadas de novo.</p>` +
       `<div class="field"><label for="reopen-reason">Motivo da reabertura</label>` +
       `<textarea id="reopen-reason" rows="3" maxlength="1000" placeholder="Ex.: auditoria apontou divergência na cláusula 4.2."></textarea>` +
       `<p class="field__hint" data-reopen-hint>O motivo fica registrado na atividade do documento.</p></div>`,
@@ -2675,12 +2673,7 @@ function renameDoc(docId) {
     eyebrow: fileKindLabel(isItem ? 'item' : fileKind(doc.name, doc.mime)),
     body:
       `<div class="field"><label for="rename-input">${isItem ? 'Nome do item' : 'Nome do arquivo'}</label>` +
-      `<input id="rename-input" type="text" maxlength="220" value="${esc(doc.name)}"></div>` +
-      `<p class="sheet__note">${
-        isItem
-          ? 'A numeração, as evidências e as verificações continuam iguais — só o nome muda.'
-          : 'O arquivo em si não é alterado — apenas o nome que aparece no processo.'
-      }</p>`,
+      `<input id="rename-input" type="text" maxlength="220" value="${esc(doc.name)}"></div>`,
     footer:
       `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
       `<button type="button" class="btn btn--primary" data-save>Salvar nome</button>`,
@@ -2740,7 +2733,7 @@ async function toggleDocActive(docId) {
       `<div class="field"><label for="inactive-reason">Motivo</label>` +
       `<textarea id="inactive-reason" rows="3" maxlength="500" ` +
       `placeholder="Ex.: cargo inexistente, documento descontinuado, não se aplica…"></textarea></div>` +
-      `<p class="sheet__note">O documento sai da fila e conta como verificado; as verificações ficam suspensas e podem ser retomadas ao reativar. A dispensa entra na revisão do Diogenes.</p>`,
+      `<p class="sheet__note">O documento sai da fila e as verificações ficam suspensas até reativar.</p>`,
     footer:
       `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
       `<button type="button" class="btn btn--primary" data-inactivate>Inativar documento</button>`,
@@ -2990,8 +2983,7 @@ function openItemDialog() {
     title: 'Adicionar itens',
     eyebrow: process.name,
     body:
-      `<p class="sheet__note">Cada item é uma linha desta listagem (por exemplo, um prestador). ` +
-      `Ele recebe uma verificação por critério e guarda as evidências que comprovam cada uma.</p>` +
+      `<p class="sheet__note">Cada item recebe uma verificação por critério e guarda suas evidências.</p>` +
       `<div class="field">` +
       `<label for="item-name">Itens a adicionar <span class="field__optional" data-item-count>0</span></label>` +
       `<div class="criteria-chips" data-item-chips></div>` +
@@ -3001,7 +2993,6 @@ function openItemDialog() {
       `placeholder="Nome do item — ex.: RMC">` +
       `<button type="button" class="btn btn--secondary btn--sm" id="item-add">${icon('plus', 15)} Adicionar</button>` +
       `</div>` +
-      `<p class="field__hint">A numeração (01, 02…) é automática.</p>` +
       `</div>` +
       `<details class="item-paste">` +
       `<summary>Colar vários de uma vez</summary>` +
@@ -3261,7 +3252,7 @@ async function openAttachEvidence(checkId, itemId) {
     title: 'Anexar evidência',
     eyebrow: criterion?.label || item.name,
     body:
-      `<p class="sheet__note">Evidências que comprovam <b>${esc(item.name)}</b> — marque quais comprovam este critério.</p>` +
+      `<p class="sheet__note">Evidências de <b>${esc(item.name)}</b> — marque as que comprovam este critério.</p>` +
       `<div class="attach-list" style="max-height:340px;overflow:auto;">${evidenceListHtml(state, itemId, checkId)}</div>` +
       `<input type="file" id="att-file" class="sr-only" multiple ` +
       `accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.heic,.doc,.docx,.xls,.xlsx,.csv,.txt">` +

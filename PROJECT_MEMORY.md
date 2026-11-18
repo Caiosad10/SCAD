@@ -709,8 +709,8 @@ A pergunta do Sergio era simples — "no documento real existe, na prévia não 
 #### 24.3 O que muda na tela
 
 - A figura aparece **no lugar certo do documento**, no tamanho do Word (596 px de largura = 446,4 pt), dentro do fluxo da página — não é anexo no rodapé.
-- No fim da prévia, uma linha discreta: *"As figuras do Visio aparecem aqui convertidas em imagem — o arquivo original não foi alterado."* Sem ela, alguém poderia achar que o arquivo foi modificado.
-- O aviso da seção 23 continua existindo, mas virou **caminho de exceção** (só quando a conversão falha).
+- Nada de nota de rodapé explicando a conversão: a figura desenhada fala por si (a nota que existia na primeira versão foi removida na revisão de textos — ver 25).
+- O aviso da seção 23 continua existindo, mas virou **caminho de exceção** (só quando a conversão falha) e agora é curto: *"Uma figura deste documento não aparece nesta prévia. Abra o arquivo para ver a figura."*
 
 #### 24.4 Decisões que ficaram registradas
 
@@ -720,6 +720,49 @@ A pergunta do Sergio era simples — "no documento real existe, na prévia não 
 
 #### 24.5 Testes (QA 4188)
 
-- `previewcriteria.mjs`: **44 checagens**. As novas: fluxograma desenhado (SVG ≥ 400 px), tamanho de documento (596 px), **a figura vem do PNG convertido (989×573, conferido lendo o blob desenhado)**, nota de conversão presente, nenhum aviso de figura ausente quando a conversão funciona, e — com `fetch` do pedido de conversão forçado a falhar — o aviso aparece no topo e o painel de critérios continua funcionando. Capturas: `shots/preview-07-fluxograma.png` e `shots/preview-06-sem-conversao.png`.
+- `previewcriteria.mjs`: **45 checagens**. As novas: fluxograma desenhado (SVG ≥ 400 px), tamanho de documento (596 px), **a figura vem do PNG convertido (989×573, conferido lendo o blob desenhado)**, nenhuma nota de rodapé sobre a conversão, e — com `fetch` do pedido de conversão forçado a falhar — aviso curto no topo, **o resto do documento continua desenhado** e o painel de critérios continua funcionando. Capturas: `shots/preview-07-fluxograma.png` e `shots/preview-06-sem-conversao.png`.
 - Regressões no QA, todas verdes: `findingstest` (16), `correctionui` (44), `changenotes` (30), `ordertest` (12), `difftest` (28), `reviewtest` (24), `correctiontest` (65).
 - **Pegadinha anotada:** `ordertest.mjs` recebe **`porta processId`** (não o PID do processo do servidor) e `reviewtest.mjs` quer a **URL completa** — passar errado dá "lista vazia" e parece defeito de ordenação.
+
+### 25. O que é texto de teste e o que é texto de produção (2026-11-18)
+
+Regra definida pelo Sergio antes do deploy da v2.3.1: **texto de explicação longa é ferramenta de teste, não interface**. O que ajudou a conferir o comportamento durante o desenvolvimento não deve sobrar para quem usa.
+
+#### 25.1 A régua
+
+- **Fica:** o que o usuário não pode descobrir sozinho na hora de decidir — consequência de uma ação, aviso de perda, exemplo no *placeholder*, atalho de teclado, e a apresentação de primeira vez (`onboarding`).
+- **Sai:** explicação de como o sistema funciona, justificativa de implementação ("o original não é alterado", "a cópia é independente"), didática do tipo "abra a bancada e comece por…" quando o botão já diz isso, e repetição do que o título do bloco já informa.
+- **Encurta:** consequência real que precisa aparecer — uma frase, sem "porque", sem "assim você".
+- **Teste não dita texto.** Quando uma checagem depende da frase, ela passa a verificar o **sentido** (o aviso existe? diz o que falta? não virou tutorial?), não a redação exata. Caso contrário, melhorar a mensagem quebra teste sem quebrar nada.
+
+#### 25.2 O caso que ele apontou
+
+No painel "O que mudou" (comparação de correção), o cabeçalho já diz o que é, e o resumo já credita quem escreveu ("relato de Sergio"). A frase "*Este arquivo não guarda texto para comparar (PDF digitalizado, imagem ou planilha). O que mudou:*" explicava o mecanismo para quem só quer ler o relato.
+
+- Antes: lead de duas frases + rodapé de três linhas no diff ("trechos copiados do texto dos dois arquivos… imagens, tabelas e formatação não entram… serve para o revisor achar o que mudou…").
+- Depois: **sem lead**; sem relato, uma linha — "Quem corrigiu não descreveu o que mudou."; o diff termina nos trechos, sem nota de rodapé.
+
+#### 25.3 O que mudou nesta rodada (32 textos, 6 arquivos)
+
+| Onde | Antes | Depois |
+|---|---|---|
+| Prévia de figura ausente | "N figura(s) deste documento não aparecem na prévia. O arquivo guarda um desenho do Visio em EMF (com o arquivo do Visio embutido), um formato do Windows que o navegador não abre. No arquivo original ela aparece — o resto do texto e das tabelas está aqui." | "**Uma figura deste documento não aparece nesta prévia.** Abra o arquivo para ver a figura." + botão |
+| Prévia de .docx | "Prévia montada no seu navegador a partir do arquivo original — o layout pode variar um pouco em relação ao Word, e o arquivo em si não é alterado." | "Prévia aproximada — o layout pode diferir do Word." |
+| Prévia de .doc | "Prévia em texto — o formato .doc não guarda o layout para o navegador. O texto é o do documento inteiro, na ordem; imagens e tabelas não aparecem como no Word." | "Prévia em texto — este formato não guarda o layout." |
+| Conversão do Visio | nota de rodapé "as figuras aparecem aqui convertidas em imagem — o arquivo original não foi alterado" | **nenhuma** (a figura desenhada fala por si) |
+| Adicionar correção | "Envie a nova versão… A versão atual continua disponível para comparação — nada é apagado." | "Envie a nova versão do arquivo corrigido." |
+| Renomear | "O arquivo em si não é alterado — apenas o nome que aparece no processo." | removido |
+| Inativar | "…conta como verificado; as verificações ficam suspensas e podem ser retomadas ao reativar. A dispensa entra na revisão do Diogenes." | "O documento sai da fila e as verificações ficam suspensas até reativar." |
+| Adicionar itens | "Cada item é uma linha desta listagem (por exemplo, um prestador)…"; "A numeração (01, 02…) é automática." | "Cada item recebe uma verificação por critério e guarda suas evidências."; dica removida |
+| Ajustes → processo | "O código interno não aparece na interface; as exportações trazem a identificação legível do processo." | removido |
+| Ajustes → critérios | "…além de Pendente, Conforme, Não conforme e Observação. Aparecem nas verificações de cada item." | "Resultados extras desta listagem, além dos quatro padrão." |
+| Painel (início) | "3 documentos × 12 critérios = 36 verificações. Abra a bancada e comece pelo primeiro documento." | "3 documentos × 12 critérios = 36 verificações." |
+| Matriz sem documentos | "Sem documentos. Depois da importação, cada arquivo aparece aqui com a coluna por critério." | "Sem documentos." |
+| Apontamentos vazio | "Ao marcar uma verificação como 'Não conforme', 'Observação' ou outro estado…" | "'Não conforme', 'Observação' e os status personalizados aparecem aqui com a nota e o critério." |
+
+Ficaram de propósito (são aviso, não tutorial): "a correção pendente será promovida a v3 e a versão atual fica arquivada"; "o critério fica em atenção; a mensagem vai para o analista"; placeholders com exemplo; dica de teclado; `onboarding`.
+
+#### 25.4 Testes
+
+`previewcriteria` ganhou a checagem oposta (a nota de conversão **não** deve existir), o aviso curto com link, e — o ponto que o Sergio levantou — **"sem conversão: o resto do documento continua desenhado"**: com a conversão forçada a falhar, a prévia segue mostrando o documento inteiro (texto e páginas), só a figura não aparece. `correctionui` deixou de exigir o rodapé explicativo do diff e passou a exigir que ele **não** esteja lá.
+

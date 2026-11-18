@@ -209,7 +209,6 @@ async function pedirPreviaConvertida(stored) {
  */
 async function avisarFigurasQueNaoDesenham(alvo, url, desenhos) {
   const presas = desenhos?.presas || [];
-  const visio = Boolean(desenhos?.visio);
 
   // Imagem que o desenho tentou mostrar e o navegador não abriu (outros formatos).
   const figuras = [...alvo.querySelectorAll('img')];
@@ -234,12 +233,9 @@ async function avisarFigurasQueNaoDesenham(alvo, url, desenhos) {
   const caixa = document.createElement('div');
   caixa.className = 'preview-nao-desenha';
   caixa.innerHTML =
-    `${icon('file', 18)}<p><b>${total} figura(s) deste documento não aparecem na prévia.</b> ` +
-    (presas.length
-      ? `O arquivo guarda ${presas.length === 1 ? 'um desenho' : `${presas.length} desenhos`} do Visio em ` +
-        `EMF${visio ? ' (com o arquivo do Visio embutido)' : ''}, um formato do Windows que o navegador não abre. `
-      : '') +
-    `No arquivo original ${total === 1 ? 'ela aparece' : 'elas aparecem'} — o resto do texto e das tabelas está aqui.</p>` +
+    `${icon('file', 18)}<p><b>${
+      total === 1 ? 'Uma figura deste documento não aparece nesta prévia.' : `${total} figuras deste documento não aparecem nesta prévia.`
+    }</b> Abra o arquivo para ${total === 1 ? 'ver a figura' : 'ver as figuras'}.</p>` +
     `<a class="btn btn--ghost btn--sm" href="${url}" target="_blank" rel="noopener">Abrir o arquivo</a>`;
   alvo.prepend(caixa);
 
@@ -254,7 +250,7 @@ async function avisarFigurasQueNaoDesenham(alvo, url, desenhos) {
 async function prepararDesenhos(dados, stored, aoEsperar) {
   const desenhos = await lerDesenhos(dados);
   if (!desenhos.presas.length || !stored) return { dados, convertida: false, desenhos };
-  aoEsperar?.('Convertendo a figura do Visio para aparecer aqui…');
+  aoEsperar?.('Convertendo a figura…');
   const previa = await pedirPreviaConvertida(stored);
   if (!previa?.url) return { dados, convertida: false, desenhos };
   const pronta = await fetch(previa.url, { credentials: 'same-origin' });
@@ -267,11 +263,9 @@ async function prepararDesenhos(dados, stored, aoEsperar) {
 /** Nota do fim da prévia depois de desenhar o documento. */
 async function finalizarDesenhos(alvo, url, desenhos, convertida) {
   if (convertida) {
-    alvo.insertAdjacentHTML(
-      'beforeend',
-      '<p class="sheet__note">As figuras do Visio aparecem aqui convertidas em imagem — ' +
-        'o arquivo original não foi alterado.</p>'
-    );
+    // A figura convertida fala por si: sem nota de rodapé. Mas se alguma imagem
+    // ainda não abriu no navegador, o aviso entra no lugar — nunca caixa vazia.
+    await avisarFigurasQueNaoDesenham(alvo, url, { presas: [] });
     return;
   }
   await avisarFigurasQueNaoDesenham(alvo, url, desenhos);
@@ -369,7 +363,7 @@ export async function montarPreviaDoc(alvo, url, { nome = 'documento', nota = nu
       await finalizarDesenhos(alvo, url, desenhos, convertida);
       setTimeout(() => ajustarLargura(alvo), 80);
       trocarNota(
-        'Este arquivo tem extensão .doc, mas por dentro é um .docx — por isso a prévia completa funciona aqui.'
+        'Este arquivo é um .docx com extensão antiga.'
       );
       return;
     }

@@ -163,8 +163,8 @@ export function renderDashboard(state) {
   } else {
     title = requirementsMode ? 'Tudo pronto para a primeira linha.' : 'Tudo pronto para a primeira verificação.';
     lead = requirementsMode
-      ? `${countLabel(docs.length, 'linha', 'linhas')} × ${countLabel(crit.length, 'critério', 'critérios')} = ${countLabel(s.total, 'verificação', 'verificações')}. Abra a bancada e comece pela primeira linha.`
-      : `${countLabel(docs.length, 'documento', 'documentos')} × ${countLabel(crit.length, 'critério', 'critérios')} = ${countLabel(s.total, 'verificação', 'verificações')}. Abra a bancada e comece pelo primeiro documento.`;
+      ? `${countLabel(docs.length, 'linha', 'linhas')} × ${countLabel(crit.length, 'critério', 'critérios')} = ${countLabel(s.total, 'verificação', 'verificações')}.`
+      : `${countLabel(docs.length, 'documento', 'documentos')} × ${countLabel(crit.length, 'critério', 'critérios')} = ${countLabel(s.total, 'verificação', 'verificações')}.`;
     actions =
       (continueDoc
         ? `<a class="btn btn--primary" href="#/analisar/${continueDoc.id}">${icon('analyze', 16)} Começar a análise</a>`
@@ -299,7 +299,7 @@ export function renderDashboard(state) {
   if (!docs.length) {
     matrixBody =
       `<div class="matrix-empty">` +
-      `Sem documentos. Depois da importação, cada arquivo aparece aqui com uma coluna por critério.` +
+      `Sem documentos.` +
       `</div>`;
   } else if (!crit.length) {
     matrixBody = `<div class="matrix-empty">Nenhum critério definido. <a href="#/ajustes">Adicionar critério</a>.</div>`;

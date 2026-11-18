@@ -289,7 +289,7 @@ check(
   (g?.maiorImagem || 0) >= 500 && (g?.maiorImagem || 0) <= 700,
   `maior figura: ${g?.maiorImagem} px`
 );
-check('prévia avisa que as figuras foram convertidas', /convertid/i.test(g?.notaConversao || ''), g?.notaConversao);
+check('prévia não deixa nota de rodapé sobre a conversão (texto de teste sai da produção)', !/convertid/i.test(g?.notaConversao || ''), g?.notaConversao);
 check('nenhum aviso de figura ausente quando a conversão funciona', (g?.figuras || []).length === 0, JSON.stringify(g?.figuras));
 check('texto do documento continua na prévia ("2. FLUXOGRAMA")', /FLUXOGRAMA/i.test(g?.textoDocx || ''), (g?.textoDocx || '').length + ' caracteres');
 await shot('preview-01-rp-criterios');
@@ -416,12 +416,17 @@ await sleep(3000);
 const gsem = await gaveta();
 check('sem conversão: a figura que não desenha deixa aviso', (gsem?.figuras || []).length >= 1, JSON.stringify(gsem?.figuras));
 check(
-  'sem conversão: o aviso explica o Visio (EMF) e oferece abrir o arquivo',
-  (gsem?.figuras || []).some((t) => /visio/i.test(t) && /EMF/i.test(t)) && gsem?.avisoComLink === true,
+  'sem conversão: o aviso é curto, diz que a figura não aparece e oferece abrir o arquivo',
+  (gsem?.figuras || []).some((t) => /não aparece nesta prévia/i.test(t) && /abra o arquivo/i.test(t)) && gsem?.avisoComLink === true,
   gsem?.figuras?.[0]?.slice(0, 180)
 );
 check('sem conversão: o aviso fica no topo da prévia', gsem?.avisoNoTopo === true, String(gsem?.avisoNoTopo));
 check('sem conversão: o painel de critérios continua funcionando', (gsem?.rotulos || []).length === rpChecks.length);
+check(
+  'sem conversão: o resto do documento continua desenhado',
+  (gsem?.textoDocx || '').length > 500 && /FLUXOGRAMA/i.test(gsem?.textoDocx || ''),
+  (gsem?.textoDocx || '').length + ' caracteres'
+);
 await shot('preview-06-sem-conversao');
 
 check('nenhuma exceção de JavaScript', exceptions.length === 0, exceptions.slice(0, 3).join(' | '));

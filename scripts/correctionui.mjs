@@ -227,8 +227,8 @@ const corpoPdf = await evalJs(
   `(() => { const d = [...document.querySelectorAll('dialog[open]')].pop(); return d?.querySelector('[data-diff-host]')?.innerText || ''; })()`
 );
 check(
-  'sem diff, o painel guia pela comparação lado a lado',
-  (corpoPdf || '').toLowerCase().includes('comparação ao lado'),
+  'sem diff, o painel diz só que ninguém descreveu (sem tutorial)',
+  /não descreveu o que mudou/i.test(corpoPdf || ''),
   corpoPdf.slice(0, 120)
 );
 check(
@@ -321,11 +321,7 @@ if (wordDoc) {
       novas: [...root.querySelectorAll('.diff__line--add')].map((el) => el.innerText.replace(/^\\+?\\s*/, '').trim()),
     };
   })()`);
-  check(
-    'rodapé avisa que os trechos são texto do arquivo, não do sistema',
-    /texto dos dois arquivos/i.test(painel?.nota || '') && /não informação do sistema/i.test(painel?.nota || ''),
-    JSON.stringify(painel?.nota)
-  );
+  check('painel não repete explicação no rodapé (só os trechos)', !painel?.nota, JSON.stringify(painel?.nota));
   check('estilo original do painel mantido (sem caixa de aviso)', painel?.fonte === 0, JSON.stringify(painel?.fonte));
   check(
     'trechos agrupados pela âncora do documento',

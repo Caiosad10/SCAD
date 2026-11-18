@@ -85,8 +85,7 @@ export function renderSettings(state) {
       `<div class="section-head"><h2 class="section-head__title">Status personalizados</h2>` +
       `<span class="section-head__meta">${cs.length} de 2</span></div>` +
       `<div class="card__body">` +
-      `<p class="field__hint">Resultados extras desta listagem, além de Pendente, Conforme, Não conforme e Observação. ` +
-      `Aparecem nas verificações de cada item.</p>` +
+      `<p class="field__hint">Resultados extras desta listagem, além dos quatro padrão.</p>` +
       (cs.length
         ? `<div class="cs-list">` +
           cs
@@ -143,7 +142,6 @@ export function renderSettings(state) {
       'bookmark',
       14
     )} Ver coleção</a></div>` +
-    `<p class="field__hint">O código interno não aparece na interface; as exportações trazem a identificação legível do processo.</p>` +
     `</form></section>` +
     `<section class="card">` +
     `<div class="section-head"><h2 class="section-head__title">Critérios de verificação</h2>` +
@@ -162,11 +160,11 @@ export function renderSettings(state) {
     `<input id="criterion-label" name="label" type="text" maxlength="160" placeholder="Novo critério…" autocomplete="off" required>` +
     `<button class="btn btn--secondary btn--sm" type="submit">${icon('plus', 15)} Adicionar</button>` +
     `</form>` +
-    `<p class="field__hint">Cada critério cria uma verificação pendente em todos os ${plural(
+    `<p class="field__hint">Cada critério cria uma verificação pendente nos ${plural(
       s.docs,
       'documento',
       'documentos'
-    )}. Ao excluir, as verificações daquele critério também saem.</p>` +
+    )}. Ao excluir, as verificações saem junto.</p>` +
     `</div></section>` +
     customStatusesCard +
     `</div>` +

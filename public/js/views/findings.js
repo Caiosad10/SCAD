@@ -100,7 +100,7 @@ export function renderFindingsResults(state) {
     return emptyState({
       iconName: 'findings',
       title: 'Nenhum apontamento registrado',
-      text: 'Ao marcar uma verificação como “Não conforme”, “Observação” ou outro estado de apontamento (ex.: “Ausente”), o registro aparece aqui com a nota e o critério.',
+      text: '“Não conforme”, “Observação” e os status personalizados aparecem aqui com a nota e o critério.',
       action: `<a class="btn btn--secondary" href="#/analisar">${icon('analyze', 16)} Ir para a bancada</a>`,
     });
   }
