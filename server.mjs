@@ -22,7 +22,7 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const PORT = Number(process.env.PORT || process.argv[2] || 4177);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '2.3.0';
+const VERSION = '2.3.1';
 const MAX_BODY = 48 * 1024 * 1024;
 /* Estados base de check; processos "requirements" adicionam até 2 customizados. */
 
@@ -152,12 +152,33 @@ function normalizeStoredFile(source) {
   return file;
 }
 
+/**
+ * "O que mudou" escrito por quem corrigiu. Serve para o revisor quando o diff
+ * não roda (PDF digitalizado, imagem): o painel deixa de vir vazio.
+ */
+function changeNoteOf(source) {
+  const note = typeof source?.changeNote === 'string' ? source.changeNote.trim() : '';
+  return note.slice(0, 1200);
+}
+
 function normalizeCorrection(source) {
-  return normalizeStoredFile(source);
+  const file = normalizeStoredFile(source);
+  if (!file) return null;
+  const note = changeNoteOf(source);
+  if (note) file.changeNote = note;
+  return file;
 }
 
 function normalizeVersions(list) {
-  return array(list).map((item) => normalizeStoredFile(item)).filter(Boolean);
+  return array(list)
+    .map((item) => {
+      const file = normalizeStoredFile(item);
+      if (!file) return null;
+      const note = changeNoteOf(item);
+      if (note) file.changeNote = note;
+      return file;
+    })
+    .filter(Boolean);
 }
 
 /** Reabertura da revisão: fica no documento até a próxima aprovação. */
@@ -1239,6 +1260,7 @@ async function handleApi(req, res, pathname, url) {
         throw new HttpError(500, `Não foi possível gravar o arquivo: ${err.message}`);
       }
       const result = await mutate(() => {
+        const changeNote = optionalText(body.changeNote, 1200, 'o que mudou');
         doc.correction = {
           stored,
           name,
@@ -1248,9 +1270,13 @@ async function handleApi(req, res, pathname, url) {
           by: actor?.id || null,
           byName: actor?.name || null,
         };
-        log(`Correção enviada (v${version}): ${name}${actor ? ` — por ${actor.name}` : ''}`, {
-          processId: doc.processId,
-        });
+        if (changeNote) doc.correction.changeNote = changeNote;
+        log(
+          `Correção enviada (v${version}): ${name}${actor ? ` — por ${actor.name}` : ''}${
+            changeNote ? ' — com o relato do que mudou' : ''
+          }`,
+          { processId: doc.processId }
+        );
         return {
           rev: state.rev,
           state: scopedState(doc.processId),
@@ -1260,6 +1286,37 @@ async function handleApi(req, res, pathname, url) {
         };
       });
       return sendJson(res, 201, result);
+    }
+    if (method === 'PATCH') {
+      // Quem corrigiu conta o que mudou quando o diff não roda (PDF, imagem).
+      // Pode escrever junto com o envio ou depois; o revisor lê na comparação.
+      const body = await readJson(req);
+      const correction = doc.correction;
+      if (!correction) throw new HttpError(409, 'Não há correção pendente neste documento.');
+      if (actor && correction.by && actor.id !== correction.by) {
+        throw new HttpError(403, 'Só quem enviou a correção pode descrever o que mudou.');
+      }
+      const changeNote = optionalText(body.changeNote, 1200, 'o que mudou');
+      const version = correctionVersion(doc);
+      const result = await mutate(() => {
+        if (changeNote) correction.changeNote = changeNote;
+        else delete correction.changeNote;
+        doc.correction = correction;
+        log(
+          changeNote
+            ? `Correção v${version}: relato do que mudou atualizado${actor ? ` por ${actor.name}` : ''}`
+            : `Correção v${version}: relato do que mudou apagado`,
+          { processId: doc.processId }
+        );
+        return {
+          rev: state.rev,
+          state: scopedState(doc.processId),
+          correction: doc.correction,
+          review: docReview(doc),
+          activity: scopedActivity(doc.processId, 40),
+        };
+      });
+      return sendJson(res, 200, result);
     }
     if (method === 'DELETE') {
       const correction = doc.correction;
@@ -1406,8 +1463,10 @@ async function handleApi(req, res, pathname, url) {
       // comparação a qualquer tempo.
       const reopened = doc.reopen ? doc.reopen.byName || 'revisor' : null;
       let promoted = null;
+      let changeNote = '';
       if (doc.correction) {
         const correction = doc.correction;
+        changeNote = changeNoteOf(correction);
         const previous = normalizeStoredFile({
           stored: doc.stored,
           name: doc.name,
@@ -1416,14 +1475,16 @@ async function handleApi(req, res, pathname, url) {
           addedAt: doc.addedAt,
         });
         if (previous) {
-          doc.versions = array(doc.versions).concat([
-            {
-              ...previous,
-              replacedAt: now(),
-              replacedBy: actor.id,
-              replacedByName: actor.name,
-            },
-          ]);
+          // O relato de quem corrigiu fica no registro da versão substituída:
+          // "o que mudou da v1 para a v2" continua legível no histórico.
+          const registro = {
+            ...previous,
+            replacedAt: now(),
+            replacedBy: actor.id,
+            replacedByName: actor.name,
+          };
+          if (changeNote) registro.changeNote = changeNote;
+          doc.versions = array(doc.versions).concat([registro]);
           promoted = array(doc.versions).length + 1;
         }
         doc.stored = correction.stored;
@@ -1437,6 +1498,7 @@ async function handleApi(req, res, pathname, url) {
       const parts = ['Documento aprovado'];
       if (reopened) parts.push(`revisão reaberta por ${reopened} aprovada`);
       if (promoted) parts.push(`correção v${promoted} promovida e versão anterior arquivada`);
+      if (changeNote) parts.push(`o que mudou: “${changeNote}”`);
       log(`${parts.join(' — ')}${message ? `: “${message}”` : ''}: ${doc.name}`, {
         processId: doc.processId,
       });

@@ -5556,6 +5556,102 @@ button.version-row:hover {
   color: var(--muted-soft);
 }
 
+.version-row__copy .version-row__note {
+  color: var(--muted);
+  font-size: var(--t-caption);
+  white-space: normal;
+}
+
+/* ------------------------------------- "o que mudou" escrito por quem corrigiu */
+
+.changenote {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--card-soft);
+}
+
+.changenote + .diff {
+  margin-top: var(--s3);
+}
+
+.changenote__lead,
+.changenote__label {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--t-overline);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.changenote__label {
+  display: block;
+  font-family: var(--font-sans);
+  font-size: var(--t-caption);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink-2);
+}
+
+.changenote__text {
+  margin: 0;
+  font-size: var(--t-small);
+  line-height: 1.6;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.changenote__text--vazio {
+  color: var(--muted-soft);
+  font-style: italic;
+}
+
+.changenote__by {
+  margin: 0;
+  font-size: var(--t-caption);
+  color: var(--muted-soft);
+}
+
+.changenote__hint {
+  margin: 0;
+  font-size: var(--t-caption);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.changenote__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.changenote--form {
+  background: var(--card);
+}
+
+.changenote__input {
+  width: 100%;
+  min-height: 84px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--card-sink);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--t-small);
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.changenote__input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
 /* ---------------------------------------------------- "o que mudou" (diff) */
 
 .compare__diff {

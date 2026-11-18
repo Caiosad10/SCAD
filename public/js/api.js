@@ -71,6 +71,8 @@ export const api = {
   updateDocument: (id, payload) => request('PATCH', `/api/documents/${encodeURIComponent(id)}`, payload),
   deleteDocument: (id) => request('DELETE', `/api/documents/${encodeURIComponent(id)}`),
   addCorrection: (id, payload) => request('POST', `/api/documents/${encodeURIComponent(id)}/correction`, payload),
+  setChangeNote: (id, changeNote) =>
+    request('PATCH', `/api/documents/${encodeURIComponent(id)}/correction`, { changeNote }),
   removeCorrection: (id) => request('DELETE', `/api/documents/${encodeURIComponent(id)}/correction`),
 
   updateCheck: (id, patch) => request('PATCH', `/api/checks/${encodeURIComponent(id)}`, patch),

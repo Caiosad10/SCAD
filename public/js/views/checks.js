@@ -216,16 +216,16 @@ export function renderCheckRow(state, check, criterion, index, options = {}) {
 export function checksHeadHtml(state, doc) {
   const st = docStats(state, doc.id);
   const reqs = isRequirementsFlow(state);
+  // No fluxo de documentos não há ação aqui: importar documentos pertence ao
+  // Acervo e ao Painel do processo, e trocar o arquivo deste documento é
+  // "Adicionar correção", no topo da bancada. Só a listagem cresce por aqui.
   const addButton = reqs
     ? `<button type="button" class="btn btn--ghost btn--sm checks__add" data-action="open-item-dialog" title="Novo item da listagem">${icon(
         'plus',
         14
       )} Adicionar item</button>`
-    : `<button type="button" class="btn btn--ghost btn--sm checks__add" data-action="open-import" title="Importar mais documentos">${icon(
-        'upload',
-        14
-      )} Importar mais</button>`;
-  const actions = `<div class="checks__actions">${addButton}</div>`;
+    : '';
+  const actions = addButton ? `<div class="checks__actions">${addButton}</div>` : '';
 
   if (doc.active === false) {
     return (

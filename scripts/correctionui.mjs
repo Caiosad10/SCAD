@@ -206,11 +206,38 @@ for (let i = 0; i < 24; i += 1) {
   if (avisoPdf && !/comparando/i.test(avisoPdf)) break;
   await sleep(250);
 }
+const painelPdf = await evalJs(`(() => {
+  const d = [...document.querySelectorAll('dialog[open]')].pop();
+  const secao = d?.querySelector('[data-compare-diff]');
+  const corpo = d?.querySelector('[data-diff-host]');
+  return {
+    aberto: corpo ? !corpo.hidden : null,
+    dataOpen: secao?.getAttribute('data-open'),
+    expandido: d?.querySelector('[data-compare-diff-toggle]')?.getAttribute('aria-expanded'),
+  };
+})()`);
 check('PDF digitalizado avisa que não há texto para comparar', /sem texto para comparar/i.test(avisoPdf), avisoPdf);
 check(
-  'aviso manda continuar pela comparação lado a lado',
-  (await evalJs('document.querySelector("[data-diff-host]")?.innerText || ""')).toLowerCase().includes('lado a lado')
+  'PDF digitalizado: painel "O que mudou" começa fechado',
+  painelPdf?.aberto === false && painelPdf?.dataOpen === 'false' && painelPdf?.expandido === 'false',
+  JSON.stringify(painelPdf)
 );
+await clickNoDialog('[data-compare-diff-toggle]');
+const corpoPdf = await evalJs(
+  `(() => { const d = [...document.querySelectorAll('dialog[open]')].pop(); return d?.querySelector('[data-diff-host]')?.innerText || ''; })()`
+);
+check(
+  'sem diff, o painel guia pela comparação lado a lado',
+  (corpoPdf || '').toLowerCase().includes('comparação ao lado'),
+  corpoPdf.slice(0, 120)
+);
+check(
+  'sem diff, o painel mostra o espaço do relato de quem corrigiu',
+  await evalJs(
+    `Boolean([...document.querySelectorAll('dialog[open]')].pop()?.querySelector('[data-diff-host] .changenote'))`
+  )
+);
+await clickNoDialog('[data-compare-diff-toggle]');
 await sleep(1200);
 await shot('correcao-03-comparacao');
 

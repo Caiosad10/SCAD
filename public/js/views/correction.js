@@ -83,6 +83,55 @@ export function diffAvisoHtml(mensagem, dica) {
 }
 
 /**
+ * "O que mudou" escrito por quem corrigiu.
+ *
+ * Quando o diff não roda (PDF digitalizado, imagem, planilha), o painel não pode
+ * vir vazio: é este relato que o revisor lê antes de comparar as duas janelas.
+ * `editavel` libera o botão de escrever/editar para quem enviou a correção.
+ */
+export function changeNoteHtml({ texto = '', autor = '', quando = '', editavel = false } = {}) {
+  const corpo = texto
+    ? `<p class="changenote__text">${esc(texto)}</p>`
+    : `<p class="changenote__text changenote__text--vazio">` +
+      `Quem corrigiu não descreveu o que mudou — a comparação ao lado continua valendo, mas é preciso procurar as diferenças.` +
+      `</p>`;
+  const rodape =
+    texto && (autor || quando)
+      ? `<p class="changenote__by">${esc([autor, quando].filter(Boolean).join(' · '))}</p>`
+      : '';
+  const editar = editavel
+    ? `<button type="button" class="btn btn--ghost btn--sm" data-change-note-edit>` +
+      `${icon('pen', 13)} ${texto ? 'Editar o que mudou' : 'Descrever o que mudou'}</button>`
+    : '';
+  return (
+    `<div class="changenote">` +
+    `<p class="changenote__lead">` +
+    `Este arquivo não guarda texto para comparar (PDF digitalizado, imagem ou planilha). ` +
+    `O que mudou:</p>` +
+    corpo +
+    rodape +
+    (editar ? `<div class="changenote__foot">${editar}</div>` : '') +
+    `</div>`
+  );
+}
+
+/** Campo de edição do "o que mudou" dentro do painel da comparação. */
+export function changeNoteFormHtml({ texto = '', max = 1200 } = {}) {
+  return (
+    `<div class="changenote changenote--form">` +
+    `<label class="changenote__label" for="change-note-input">O que mudou nesta versão</label>` +
+    `<p class="changenote__hint">Descreva o que o revisor deve conferir: o que foi removido, alterado ou corrigido. ` +
+    `Vale como apoio à leitura — o arquivo continua sendo o registro.</p>` +
+    `<textarea id="change-note-input" class="changenote__input" rows="5" maxlength="${Number(max) || 1200}" ` +
+    `placeholder="Ex.: removi o item 4.2, corrigi o nome do responsável e troquei a tabela de prazos.">${esc(texto)}</textarea>` +
+    `<div class="changenote__foot">` +
+    `<button type="button" class="btn btn--primary btn--sm" data-change-note-save>${icon('check', 13)} Salvar</button>` +
+    (texto ? `<button type="button" class="btn btn--ghost btn--sm" data-change-note-cancel>Cancelar</button>` : '') +
+    `</div></div>`
+  );
+}
+
+/**
  * Lista dos trechos alterados, agrupados pela âncora (o parágrafo anterior
  * igual). Cada trecho mostra o que saiu e o que entrou, com as palavras
  * exatas marcadas.

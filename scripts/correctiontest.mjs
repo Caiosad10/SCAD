@@ -39,7 +39,11 @@ const b64 = (texto) => Buffer.from(texto, 'utf8').toString('base64');
 
 /* ------------------------------------------------------------- sanidade */
 const health = await call('GET', '/api/health');
-check('QA na 4188 com a v2.3.0-dev', health.json?.port === 4188 && health.json?.version === '2.3.0-dev', JSON.stringify(health.json));
+check(
+  'QA na 4188 rodando a v2.3.x',
+  health.json?.port === 4188 && /^2\.3\./.test(health.json?.version || ''),
+  JSON.stringify(health.json)
+);
 if (health.json?.port === 4177) {
   console.error('ABORTADO: este script não roda na produção (4177).');
   process.exit(2);
@@ -107,6 +111,36 @@ res = await call(
 );
 check('segunda correção pendente é recusada (409)', res.status === 409, `status ${res.status}`);
 
+/* ------------------------------- "O que mudou" escrito por quem corrigiu */
+res = await call(
+  'PATCH',
+  `/api/documents/${target.id}/correction`,
+  { changeNote: 'Removi o item 4.2 e corrigi o prazo.' },
+  DIOGENES,
+  PID
+);
+check('outra pessoa não descreve o que mudou (403)', res.status === 403, `status ${res.status}`);
+
+res = await call('PATCH', `/api/documents/${target.id}/correction`, { changeNote: '  ' }, SERGIO, PID);
+check('relato vazio é aceito e limpa o campo (200)', res.status === 200 && !docIn(res.json?.state)?.correction?.changeNote, `status ${res.status}`);
+
+res = await call('PATCH', `/api/documents/${target.id}/correction`, { changeNote: 42 }, SERGIO, PID);
+check('relato que não é texto é recusado (400)', res.status === 400, `status ${res.status}`);
+
+res = await call('PATCH', `/api/documents/${target.id}/correction`, { changeNote: 'x'.repeat(1300) }, SERGIO, PID);
+check('relato acima de 1200 caracteres é recusado (400)', res.status === 400, `status ${res.status} ${res.raw?.slice(0, 120)}`);
+
+const RELATO = 'Removi o item 4.2 e corrigi o prazo de 30 para 15 dias.';
+res = await call('PATCH', `/api/documents/${target.id}/correction`, { changeNote: RELATO }, SERGIO, PID);
+check('autor descreve o que mudou depois de enviar (200)', res.status === 200, `status ${res.status} ${res.raw?.slice(0, 140)}`);
+doc = docIn(res.json?.state);
+check('correção guarda o relato', doc?.correction?.changeNote === RELATO, JSON.stringify(doc?.correction)?.slice(0, 160));
+check(
+  'atividade registra o relato',
+  (res.json?.activity || []).some((item) => item.text.includes('relato do que mudou')),
+  (res.json?.activity || []).map((item) => item.text).slice(0, 3).join(' | ')
+);
+
 res = await call('POST', '/api/review/reopen', { docId: target.id, reason: 'teste' }, DIOGENES, PID);
 check('reabrir com correção pendente e sem aprovação é recusado (409)', res.status === 409, `status ${res.status}`);
 
@@ -130,6 +164,15 @@ check('correção pendente é limpa', !doc?.correction);
 check('versão anterior vai para o histórico', doc?.versions?.length === 1, JSON.stringify(doc?.versions)?.slice(0, 140));
 check('versão arquivada é o arquivo original', doc?.versions?.[0]?.stored === start.stored);
 check('versão arquivada guarda quem substituiu', doc?.versions?.[0]?.replacedByName === 'Diogenes');
+check('versão arquivada guarda o relato do que mudou', doc?.versions?.[0]?.changeNote === RELATO, JSON.stringify(doc?.versions?.[0])?.slice(0, 200));
+check(
+  'atividade registra o relato na aprovação',
+  (res.json?.activity || []).some((item) => item.text.includes('o que mudou:')),
+  (res.json?.activity || []).map((item) => item.text).slice(0, 4).join(' | ')
+);
+
+const resSemCorrecao = await call('PATCH', `/api/documents/${target.id}/correction`, { changeNote: 'x' }, SERGIO, PID);
+check('sem correção pendente, relato é recusado (409)', resSemCorrecao.status === 409, `status ${resSemCorrecao.status}`);
 check('documento volta a aprovado', doc?.review?.status === 'approved', doc?.review?.status);
 check('revisão conta a versão arquivada', doc?.review?.versions === 1, String(doc?.review?.versions));
 check(
@@ -181,21 +224,25 @@ check(
 );
 
 /* -------------------------------------------------------- correção v3 + lixo */
+const RELATO_V3 = 'Troquei a tabela de prazos e ajustei o nome do responsável.';
 res = await call(
   'POST',
   `/api/documents/${target.id}/correction`,
-  { name: 'teste-correcao-v3.txt', data: b64('versao 3') },
+  { name: 'teste-correcao-v3.txt', data: b64('versao 3'), changeNote: RELATO_V3 },
   SERGIO,
   PID
 );
 check('nova correção usa a versão 3 (201)', res.status === 201, `status ${res.status}`);
 doc = docIn(res.json?.state);
+check('relato pode vir junto com o envio', doc?.correction?.changeNote === RELATO_V3, JSON.stringify(doc?.correction)?.slice(0, 160));
 check('atividade anuncia a v3', (res.json?.activity || []).some((item) => item.text.includes('Correção enviada (v3)')));
 
 res = await call('POST', '/api/review/approve', { docId: target.id }, DIOGENES, PID);
 doc = docIn(res.json?.state);
 check('segunda promoção empilha mais uma versão', doc?.versions?.length === 2, String(doc?.versions?.length));
 check('histórico fica em ordem (v1, v2)', doc?.versions?.[0]?.stored === start.stored && doc?.versions?.[1]?.stored === correctionStored);
+check('cada versão guarda o próprio relato', doc?.versions?.[1]?.changeNote === RELATO_V3, JSON.stringify(doc?.versions?.[1])?.slice(0, 160));
+check('o relato da v1 continua na v1', doc?.versions?.[0]?.changeNote === RELATO, JSON.stringify(doc?.versions?.[0])?.slice(0, 160));
 
 /* ------------------------------------------------------------ documento novo */
 res = await call(

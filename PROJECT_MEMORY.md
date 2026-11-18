@@ -1,7 +1,7 @@
 # SCAD — Project Memory
 
-**Última atualização:** 2026-11-17
-**Estado:** **v2.3.0 em produção** (`scad/`, porta 4177, desde 17/11/2026) — correção com comparação antes/depois, versionamento e reabertura de revisão. Desenvolvimento no worktree `scad-v2` (branch `fase-a`), QA isolado na porta 4188 com dados de teste.
+**Última atualização:** 2026-11-18
+**Estado:** **v2.3.0 em produção** (`scad/`, porta 4177, desde 17/11/2026) — correção com comparação antes/depois, versionamento e reabertura de revisão. **v2.3.1 pronta no QA** (`scad-v2`, porta 4188): "Importar mais" fora da bancada, "O que mudou" sempre fechado e relato de quem corrigiu quando o diff não roda. Desenvolvimento no worktree `scad-v2` (branch `fase-a`).
 **Repositório/app:** `C:\Users\Citra LTDA\OneDrive\Desktop\DSH\scad` (produção) · branch em `scad-v2` (worktree)
 
 Este documento é a fonte de verdade das decisões de produto, regras de negócio e próximos passos. Atualizar sempre que uma decisão for tomada.
@@ -630,3 +630,33 @@ Era o item 1 da varredura (18.1) e o Sergio escolheu entre as sugestões rápida
 - **Dois furos da suíte `findingstest.mjs`, achados só na produção** (no QA passavam por sorte): ela media o corpo da gaveta **no mesmo instante do clique** (o `.docx` desenha depois, via docx-preview) e o seletor de "arquivo na tela" não cobria o `.doc` em texto (`.preview-doc`) nem enxergava texto dentro da moldura do PDF. Corrigido: clicar → esperar → medir; e a asserção passou a aceitar página desenhada, bloco de texto **ou** moldura (iframe/object/embed) sem texto. Verde nos dois ambientes depois da correção.
 - **Rollback:** `git checkout v2.2.0` no clone de produção (ou `git revert` do merge), `Copy-Item` do `db.json` e de `files\` do backup **se** algo tiver sido perdido, e reiniciar pelo mesmo script. O código antigo preserva campos desconhecidos, então voltar a versão não estraga banco já tocado pela v2.3.
 - **Pendente:** `git push` (master, fase-a e a tag `v2.3.0`) e a conferência do iPad no endereço novo da rede local.
+
+### 22. Bancada de análise: menos botão, "O que mudou" sempre fechado e com relato (2026-11-18, v2.3.1 no QA)
+
+O Sergio usou a v2.3.0 em produção na manhã de 18/11 e trouxe três pontos; ele pediu verificação **antes** de qualquer código, e o diagnóstico provou os três (painel só abria no ramo sem texto; "Importar mais" criava documento novo no processo; o diff não roda em PDF). Depois ele decidiu o desenho — inclusive recusando um campo de notas novo.
+
+#### 22.1 "Importar mais" saiu da barra de verificações
+
+- **O que era:** em `checksHeadHtml`, o fluxo de documentos desenhava um botão "Importar mais" (`data-action="open-import"`) na barra de verificações do Analisar. Ele chamava o **mesmo** `openImportDialog()` do Painel/Acervo, ou seja: criava documentos novos no processo — não anexava nada ao documento nem ao critério.
+- **Por que saiu (palavras dele):** "esse botão de importar mais na barra de verificações não tem nexo, ele já existe no painel, já existe no acervo/Documentos. Dentro do documento/Bancada, fazendo as verificações, eu não vou querer adicionar um documento novo ao processo". Trocar o arquivo **deste** documento é "Adicionar correção", no topo da bancada.
+- **O que ficou:** o fluxo por itens (`requirements`) mantém "Adicionar item" (`open-item-dialog`) — ali a lista cresce pelo próprio item, e ele não reclamou desse. O "Importar mais" do Painel do processo (`views/dashboard.js`) e do Acervo **continua igual**.
+- **Consequência técnica:** sem botão, o `div.checks__actions` não é desenhado (senão sobrava margem vazia); `.checks__head` é flex e o medidor encosta na direita sozinho. Nenhum CSS novo.
+
+#### 22.2 O painel "O que mudou" começa fechado — sempre
+
+- **O defeito:** no ramo em que o diff não roda (PDF digitalizado, imagem), `montarDiffCorrecao` chamava `mostrar(true)` para o revisor descobrir o motivo. Com `.doc`/`.docx` já vinha fechado — daí a impressão de comportamento inconsistente.
+- **Agora:** `mostrar(false)` em todos os caminhos. O motivo continua visível no resumo do cabeçalho ("sem texto para comparar" / "relato de Sergio"), e o corpo só abre no clique.
+
+#### 22.3 Quando o diff não roda, quem corrigiu conta o que mudou
+
+- **Ideia dele:** "se o diff consegue executar, ok, ele preenche sozinho. Agora, quando o diff não consegue por conta da limitação, o 'O que mudou' pode ser manual. Quem corrigiu o documento irá preencher, pontuar para o revisor, e o revisor não vai precisar ficar caçando o que mudou". **Nada de campo de notas novo** — o relato é o próprio "O que mudou".
+- **Onde se escreve (dois caminhos, mesmo dado):**
+  1. **No envio da correção** — ao escolher o arquivo, o app testa a leitura das duas versões com `textoDoArquivo`. Se as duas têm texto, nada muda (o diff preenche). Se uma não tem (PDF/imagem), aparece o campo **"O que mudou"** e o envio **só libera com o relato**. Arquivo com texto não mostra o campo — não se pede o que o diff já resolve.
+  2. **Depois de enviar** — no painel da comparação, quem enviou a correção vê "Descrever o que mudou" / "Editar o que mudou" e salva dali (`PATCH /api/documents/:id/correction`). É o que resolve as correções que já estavam pendentes antes da v2.3.1, sem reenviar arquivo.
+- **Quem pode escrever:** só quem enviou a correção (`actor.id === correction.by`, senão 403). **O revisor só lê** — o botão não existe para ele; o pedido era justamente poupar o revisor.
+- **Onde fica guardado:** `correction.changeNote` (texto ≤ 1200, opcional). Nenhum campo novo em documento, critério ou verificação; correção antiga sem relato continua válida (o painel mostra "ninguém descreveu").
+- **Na aprovação:** o relato acompanha a versão que foi substituída — `versions[].changeNote` — e o histórico de versões mostra **"O que mudou (v1 → v2): …"** na linha da versão arquivada. A atividade registra `o que mudou: "…"`. Quem lê seis meses depois entende a troca sem abrir os dois arquivos.
+- **Sem relato salvo,** o painel não fica mudo: avisa que ninguém descreveu e que a comparação ao lado continua valendo.
+- **Servidor:** `changeNoteOf` (normalização de `correction` e de `versions`), `optionalText(body.changeNote, 1200, 'o que mudou')` no `POST` e no novo `PATCH`, e a promoção copiando o relato para o registro arquivado. `api.setChangeNote`.
+- **Testes:** `correctiontest.mjs` **65** checagens (relato junto ao envio, PATCH do autor, 403 para terceiro, 400 para texto inválido/longo, 409 sem correção pendente, relato na versão arquivada e na atividade); **`scripts/changenotes.mjs` novo, 30 checagens de navegador** (barra sem "Importar mais", "Adicionar item" intacto na listagem, painel fechado no PDF, relato escrito/salvo pelo autor, revisor lê e não edita, campo exigido só para arquivo sem texto — via `DOM.setFileInputFiles`); `correctionui.mjs` atualizado para o painel fechado (**48** checagens). `ordertest.mjs` teve uma asserção corrigida ("última atividade **agora**" é rótulo válido quando a atividade é de segundos atrás).
+- **Estado:** tudo verde na 4188 (v2.3.1). **Produção continua na v2.3.0** — o deploy precisa do reinício elevado e é decisão do Sergio.

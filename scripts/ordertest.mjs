@@ -194,7 +194,7 @@ check('ordem "Atividade recente": a lista inteira na sequência certa', iguais(r
 const meta = await evalJs(`document.querySelector('#doclist .docrow__meta')?.textContent?.trim() || ''`);
 check(
   'linha passa a mostrar a última atividade, não a data de importação',
-  /última atividade há/i.test(meta) && !/importado/i.test(meta),
+  /última atividade (há|agora)/i.test(meta) && !/importado/i.test(meta),
   meta
 );
 await shot('ordem-01-atividade-recente');

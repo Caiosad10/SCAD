@@ -58,7 +58,7 @@ import {
   textoDoArquivo,
 } from './preview.js';
 import { diffTexto, resumoEmTexto } from './diff.js';
-import { diffBodyHtml, diffAvisoHtml } from './views/correction.js';
+import { changeNoteFormHtml, changeNoteHtml, diffBodyHtml, diffAvisoHtml } from './views/correction.js';
 import { renderOnboarding, chipsHtml, PRESET_LIST } from './views/onboarding.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderDocuments, renderDocumentsList, renderDocument, filterDocuments } from './views/documents.js';
@@ -2154,6 +2154,49 @@ async function montarDiffCorrecao(dialog, doc, correction) {
   };
   botao?.addEventListener('click', () => mostrar(corpo.hidden));
 
+  const state = getState();
+  const podeDescrever = currentProfile(state)?.id === correction.by;
+  const autor = correction.byName || 'quem corrigiu';
+  const quando = fmtDate(correction.addedAt);
+
+  /**
+   * Sem diff, o painel mostra o relato de quem corrigiu (ou convida a escrever).
+   * O botão só aparece para quem enviou a correção.
+   */
+  const renderSemTexto = () => {
+    const atual = docById(getState(), doc.id)?.correction || correction;
+    corpo.innerHTML = changeNoteHtml({
+      texto: atual.changeNote || '',
+      autor: atual.byName || autor,
+      quando: fmtDate(atual.addedAt) || quando,
+      editavel: podeDescrever,
+    });
+    resumo.textContent = atual.changeNote
+      ? `relato de ${atual.byName || 'quem corrigiu'}`
+      : 'sem texto para comparar';
+    corpo.querySelector('[data-change-note-edit]')?.addEventListener('click', () => {
+      const atual2 = docById(getState(), doc.id)?.correction || correction;
+      corpo.innerHTML = changeNoteFormHtml({ texto: atual2.changeNote || '' });
+      const campo = corpo.querySelector('#change-note-input');
+      campo?.focus();
+      corpo.querySelector('[data-change-note-cancel]')?.addEventListener('click', renderSemTexto);
+      corpo.querySelector('[data-change-note-save]')?.addEventListener('click', async () => {
+        const texto = (campo?.value || '').trim();
+        try {
+          const res = await api.setChangeNote(doc.id, texto);
+          setState(res.state);
+          renderSemTexto();
+          // Salvar fecha o editor e mantém o painel aberto: o autor confere o texto.
+          mostrar(true);
+          toast(texto ? 'Relato salvo.' : 'Relato apagado.');
+        } catch (err) {
+          toast(err.message, 'err');
+        }
+      });
+    });
+    mostrar(false);
+  };
+
   let falhouLeitura = false;
   const ler = async (nome, url) => {
     try {
@@ -2170,21 +2213,30 @@ async function montarDiffCorrecao(dialog, doc, correction) {
   if (!dialog.isConnected) return;
 
   if (antes === null || depois === null) {
-    resumo.textContent = 'sem texto para comparar';
-    corpo.innerHTML = diffAvisoHtml(
-      'Não dá para comparar o texto destas versões.',
-      falhouLeitura
-        ? 'A leitura de um dos arquivos falhou. A comparação lado a lado continua valendo — abra as duas versões e confira.'
-        : 'Ao menos um dos arquivos não guarda texto legível (PDF digitalizado ou imagem). A comparação lado a lado continua valendo — abra as duas versões e confira.'
-    );
-    // O aviso é curto: aparece aberto, senão o revisor não descobre o motivo.
-    mostrar(true);
+    // Painel fechado, como todo o resto: o resumo do cabeçalho já diz o que há
+    // ali dentro. O relato de quem corrigiu é o que evita caçar diferença.
+    if (falhouLeitura) {
+      corpo.innerHTML =
+        diffAvisoHtml(
+          'Não foi possível ler o texto das versões.',
+          'A comparação lado a lado continua valendo — abra as duas versões e confira.'
+        ) +
+        (correction.changeNote
+          ? changeNoteHtml({ texto: correction.changeNote, autor, quando })
+          : '');
+      resumo.textContent = correction.changeNote ? `relato de ${autor}` : 'não foi possível comparar';
+      mostrar(false);
+      return;
+    }
+    renderSemTexto();
     return;
   }
 
   const resultado = diffTexto(antes, depois);
   resumo.textContent = resumoEmTexto(resultado.resumo);
-  corpo.innerHTML = diffBodyHtml(resultado);
+  corpo.innerHTML =
+    (correction.changeNote ? changeNoteHtml({ texto: correction.changeNote, autor, quando }) : '') +
+    diffBodyHtml(resultado);
   secao.setAttribute('data-total', String(resultado.resumo.total));
   // Sempre começa fechado: a comparação lado a lado é o que o revisor veio ver.
   // Quem quiser o detalhe abre pelo cabeçalho (o resumo já aparece no topo).
@@ -2226,6 +2278,13 @@ function openAddCorrection(docId) {
       `<input type="file" id="correction-file" class="sr-only" ` +
       `accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.heic,.doc,.docx,.xls,.xlsx,.csv,.txt">` +
       `<div class="correction-selected" id="correction-selected" hidden></div>` +
+      `<div class="changenote changenote--form" id="correction-changed" hidden>` +
+      `<label class="changenote__label" for="correction-changed-text">O que mudou</label>` +
+      `<p class="changenote__hint" id="correction-changed-hint">Este arquivo não tem texto para comparar, ` +
+      `então o painel "O que mudou" mostraria o vazio. Descreva em poucas linhas o que o revisor deve conferir.</p>` +
+      `<textarea id="correction-changed-text" class="changenote__input" rows="4" maxlength="1200" ` +
+      `placeholder="Ex.: removi o item 4.2, corrigi o nome do responsável e troquei a tabela de prazos."></textarea>` +
+      `</div>` +
       `<div class="correction-preview" id="correction-preview"></div>`,
     footer:
       `<button type="button" class="btn btn--ghost" data-cancel>Cancelar</button>` +
@@ -2241,8 +2300,51 @@ function openAddCorrection(docId) {
   const dropzone = dialog.querySelector('#correction-dropzone');
   const selectedHost = dialog.querySelector('#correction-selected');
   const previewHost = dialog.querySelector('#correction-preview');
+  const changedBox = dialog.querySelector('#correction-changed');
+  const changedText = dialog.querySelector('#correction-changed-text');
+  const changedHint = dialog.querySelector('#correction-changed-hint');
   const confirm = dialog.querySelector('[data-confirm]');
   dialog.querySelector('[data-cancel]')?.addEventListener('click', () => dialog.close());
+
+  /**
+   * O "O que mudou" só é pedido quando o diff não vai conseguir rodar — ou seja,
+   * quando o arquivo novo (ou o atual) não guarda texto. Aí o relato é o único
+   * jeito de o revisor saber o que procurar, então ele passa a ser obrigatório.
+   */
+  let textoDoAtual = null;
+  const textoDoAtualCarregado = () => {
+    if (textoDoAtual) return textoDoAtual;
+    textoDoAtual = textoDoArquivo(doc.name, api.fileUrl(doc.stored))
+      .then((texto) => ({ ok: true, texto }))
+      .catch(() => ({ ok: false, texto: '' }));
+    return textoDoAtual;
+  };
+
+  const exigirRelato = (exigir) => {
+    changedBox.hidden = !exigir;
+    const vazio = exigir && !(changedText?.value || '').trim();
+    if (exigir) {
+      changedHint.textContent =
+        'Este arquivo não tem texto para comparar, então o painel "O que mudou" ficaria vazio. ' +
+        'Descreva em poucas linhas o que o revisor deve conferir.';
+    }
+    confirm.disabled = !selected || vazio;
+    if (exigir) changedText?.setAttribute('required', '');
+    else changedText?.removeAttribute('required');
+  };
+
+  let selecao = 0;
+  const detectarComparacao = async (file, url, marca) => {
+    const [atual, novo] = await Promise.all([
+      textoDoAtualCarregado(),
+      textoDoArquivo(file.name, url)
+        .then(() => ({ ok: true }))
+        .catch(() => ({ ok: false })),
+    ]);
+    if (marca !== selecao) return;
+    // Comparação só funciona com as duas versões legíveis.
+    exigirRelato(!(atual.ok && novo.ok));
+  };
 
   const select = (file) => {
     if (!file) return;
@@ -2251,6 +2353,8 @@ function openAddCorrection(docId) {
       return;
     }
     selected = file;
+    selecao += 1;
+    const marca = selecao;
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = URL.createObjectURL(file);
     selectedHost.hidden = false;
@@ -2261,7 +2365,13 @@ function openAddCorrection(docId) {
     previewHost.innerHTML = `<div class="correction-preview__body">${view.body}</div>`;
     view.montar?.(previewHost.querySelector('.correction-preview__body'));
     confirm.disabled = false;
+    detectarComparacao(file, objectUrl, marca);
   };
+
+  changedText?.addEventListener('input', () => {
+    if (changedBox.hidden) return;
+    confirm.disabled = !(changedText.value || '').trim();
+  });
 
   input?.addEventListener('change', () => select(input.files?.[0]));
   dropzone?.addEventListener('click', () => input?.click());
@@ -2285,10 +2395,16 @@ function openAddCorrection(docId) {
   confirm?.addEventListener('click', async () => {
     if (!selected) return;
     const name = (dialog.querySelector('#correction-name')?.value || '').trim() || selected.name;
+    const changeNote = changedBox.hidden ? '' : (changedText?.value || '').trim();
+    if (!changedBox.hidden && !changeNote) {
+      toast('Descreva o que mudou: este arquivo não tem texto para comparar.', 'err');
+      changedText?.focus();
+      return;
+    }
     confirm.disabled = true;
     try {
       const data = await readBase64(selected);
-      const res = await api.addCorrection(doc.id, { name, data });
+      const res = await api.addCorrection(doc.id, { name, data, changeNote });
       setState(res.state);
       dialog.close();
       renderAll({ preserveScroll: true });
@@ -2323,7 +2439,11 @@ function openVersions(docId) {
         `<span class="version-row__copy"><strong>${esc(version.name)}</strong>` +
         `<span>${fmtBytes(version.size)} · arquivada em ${esc(
           fmtDate(version.replacedAt || version.addedAt)
-        )}${version.replacedByName ? ` por ${esc(version.replacedByName)}` : ''}</span></span>` +
+        )}${version.replacedByName ? ` por ${esc(version.replacedByName)}` : ''}</span>` +
+        (version.changeNote
+          ? `<span class="version-row__note">O que mudou (v${number} → v${number + 1}): ${esc(version.changeNote)}</span>`
+          : '') +
+        `</span></span>` +
         `${icon('chevronRight', 16)}</button>`
       );
     })
